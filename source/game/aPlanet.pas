@@ -174,6 +174,27 @@ type
     function HasHostileShipsInSystem: Boolean; // @addr 0x77D8B4 @note "Tests normal-space ships in CurrentStar for RelationToShip < 10."
   end;
 
+const
+  // Stored in TPlanet.ReservedSaveValue, which the original game serializes but
+  // does not otherwise use in this build. The low nibble is the order kind;
+  // higher bits are the galaxy turn when it completes.
+  // 1,000,000,000 was used by the first queue prototype. It remains readable
+  // so already-issued orders are upgraded on their next daily simulation.
+  StrategyOrderLegacyMarker = 1000000000;
+  StrategyOrderMarker = 1500000000;
+  StrategyOrderCodeFactor = 16;
+  StrategyOrderLevelFactor = 16;
+  StrategyOrderSpecializationFactor = 64;
+  StrategyOrderTurnFactor = 512;
+  StrategyOrderFood = 1;
+  StrategyOrderEngineResearch = 2;
+  StrategyOrderMainResearch = 3;
+  StrategyOrderDefender = 4;
+  StrategyOrderScienceDevelopment = 5;
+  StrategySpecializationNone = 0;
+  StrategySpecializationScience = 1;
+  StrategySpecializationIndustry = 2;
+
 // Nested in TPlanet.TryDispatchPirateAttacks. All four helpers receive its EBP
 // as a caller-popped static link, including calls between sibling helpers.
 // Captures relative to ParentFrame:
@@ -2039,6 +2060,8 @@ procedure TPlanet.NextDay;
 var
   Good: Byte;
   I, N: Integer;
+  StrategyOrderCode, StrategyCompleteTurn, StrategyPayload: Integer;
+  StrategySpecialization, StrategyLevel: Integer;
   Strength: Extended;
   Ship: TShip;
   PirateSpawnFactor, GarrisonSpawnFactor, PirateLimitFactor, GarrisonLimitFactor: Double;
@@ -2050,6 +2073,61 @@ begin
   I := 4; // Native diagnostic-era assignment, overwritten by the later loops.
   Orbit.AngleDegrees := WrapHeadingDegrees(Orbit.AngleDegrees);
   if aGalaxy.Galaxy.SpecialSimulationMode <> 0 then Exit;
+  if (ReservedSaveValue >= StrategyOrderLegacyMarker) and
+     (ReservedSaveValue < StrategyOrderLegacyMarker + 10000000) then
+  begin
+    // Migrate a first-version queue to the packed strategy state.
+    StrategyPayload := ReservedSaveValue - StrategyOrderLegacyMarker;
+    ReservedSaveValue := StrategyOrderMarker +
+      (StrategyPayload div StrategyOrderCodeFactor) * StrategyOrderTurnFactor +
+      (StrategyPayload mod StrategyOrderCodeFactor);
+  end;
+  if (ReservedSaveValue >= StrategyOrderMarker) and
+     (ReservedSaveValue < StrategyOrderMarker + 500000000) then
+  begin
+    StrategyPayload := ReservedSaveValue - StrategyOrderMarker;
+    StrategyCompleteTurn := StrategyPayload div StrategyOrderTurnFactor;
+    StrategySpecialization := (StrategyPayload div StrategyOrderSpecializationFactor) mod 8;
+    StrategyLevel := (StrategyPayload div StrategyOrderLevelFactor) mod 4;
+    StrategyOrderCode := StrategyPayload mod StrategyOrderCodeFactor;
+    if (StrategyOrderCode <> 0) and (aGalaxy.Galaxy.CurrentTurn >= StrategyCompleteTurn) then
+    begin
+      case StrategyOrderCode of
+        StrategyOrderFood:
+          begin
+            N := 100;
+            if StrategySpecialization = StrategySpecializationIndustry then
+              Inc(N, StrategyLevel * 25);
+            Inc(Goods[Ord(t_Food)].Count, N);
+            GoodsScarcityTicks[Ord(t_Food)] := 0;
+            GoodsSurplusTicks[Ord(t_Food)] := 0;
+          end;
+        StrategyOrderEngineResearch:
+          if InventionLevels[2] < 8 then Inc(InventionLevels[2]);
+        StrategyOrderMainResearch:
+          if InventionLevels[7] < 8 then Inc(InventionLevels[7]);
+        StrategyOrderDefender:
+          begin
+            Ship := TShip(BuyWarrior(100));
+            for I := Ship.Inventory.Count - 1 downto 1 do Ship.Inventory.Delete(I);
+            Ship.RebuildEquipmentCache;
+            Ship.CreateAndEquipFuelTanks(Round(FuelTanksBaseSize), 1, Ship.OwnerId);
+            Ship.CreateAndEquipEngine(Round(EngineBaseSize), InventionLevels[2], Ship.OwnerId);
+            Ship.CreateAndEquipDefGenerator(Round(DefGeneratorBaseSize), InventionLevels[7], Ship.OwnerId);
+            Ship.CreateAndEquipWeapon(Ord(t_Weapon1), Round(WeaponInfos[Ord(t_Weapon1)].AverageSize), InventionLevels[7], Ship.OwnerId);
+            Ship.RefreshDerivedStats(True);
+          end;
+        StrategyOrderScienceDevelopment:
+          begin
+            // The specialization and tier were stored at order placement;
+            // clearing only the active order activates the completed tier.
+          end;
+      end;
+      ReservedSaveValue := StrategyOrderMarker +
+        StrategySpecialization * StrategyOrderSpecializationFactor +
+        StrategyLevel * StrategyOrderLevelFactor;
+    end;
+  end;
   if (OwnerId <> Byte(oiUninhabited)) and (CurrentStar.Status.CustomFaction <> '') then
   begin
     if NextRandomUnitFloat(RandomState) < 0.7 then AdvanceInventionProgress;

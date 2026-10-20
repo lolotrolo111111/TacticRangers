@@ -3,7 +3,7 @@ unit fGov;
 
 interface
 
-uses GI_MessageLoop, aRanger, fPanelLoad, fPanelMain, fPanelPlanet, EC_Str, EC_BlockPar, EC_CacheFont, GI_Label, Types;
+uses GI_MessageLoop, aRanger, aPlanet, fPanelLoad, fPanelMain, fPanelPlanet, EC_Str, EC_BlockPar, EC_CacheFont, GI_Label, GI_PanelScrollBar, Types;
 
 type
   TfGov = class(TMessageLoopGIWithMainPanel) // @size 0x13C
@@ -109,12 +109,299 @@ type
     procedure RunInjectedAnswer(Answer: Integer); // @addr $52DB2C
   end;
 
+  TStrategicScreen = class(TMessageLoopGI) // @size $EC
+  public
+    Gov: TfGov; // @offset $D0
+    SelectedPlanet: Integer; // @offset $D4
+    PlanetList: TPanelScrollBarGI; // @offset $D8
+    Details: TLabelGI; // @offset $DC
+    Status: TLabelGI; // @offset $E0
+    InitialPlanet: TPlanet; // @offset $E4 Mod-added initial selection.
+    DirectMode: Boolean; // @offset $E8 Mod-added remote view flag.
+    procedure OnOpen; override; // @addr $F0000010 @note "Mod-added screen."
+    procedure ProcessMouseWheel(KeyState: Cardinal; Point: TPoint; Delta: Integer); override; // @addr $F0000011 @ida "void __userpurge $name(TStrategicScreen *Self@<eax>, unsigned int KeyState@<edx>, TPoint *Point@<ecx>, int Delta@<^0>);"
+    procedure SelectPlanet(Sender: TObjectGI; KeyState: Cardinal; Point: TPoint); // @addr $F0000012 @ida "void __userpurge $name(TStrategicScreen *Self@<eax>, TObjectGI *Sender@<edx>, unsigned int KeyState@<ecx>, TPoint *Point@<^0>);"
+    procedure ActionClicked(Sender: TObjectGI; KeyState: Cardinal; Point: TPoint); // @addr $F0000013 @ida "void __userpurge $name(TStrategicScreen *Self@<eax>, TObjectGI *Sender@<edx>, unsigned int KeyState@<ecx>, TPoint *Point@<^0>);"
+    procedure CloseClicked(Sender: TObjectGI); // @addr $F0000014
+    procedure RefreshDetails; // @addr $F0000015
+  end;
+
+procedure OpenStrategicPlanet(Parent: TMessageLoopGI; Planet: TPlanet); // @addr $F0000030 @note "Mod-added remote camera management."
+
 var
   GovernmentBattleDifficulty: Integer; // @addr $889A34 Native battle launch selector, 1..3.
 
 implementation
 
-uses Classes, SysUtils, Math, Windows, Globals, GlobalsV, GR_Main, GI_Main, GI_Panel, GI_Image, GI_GAI, GI_PanelScrollBar, GI_ScrollBar, GI_GraphButton, aGalaxy, aGalaxyStruct, aConst, aShip, aPlayer, aPlanet, aScript, aMyFunction, aSaveLoad, fSaveManager, fHangar, fShip2, fTalk, ThreadCalc, aCalc, aItem, Achievements, aPirate, aNormalShip, Robot, fPlanetQuest;
+uses Classes, SysUtils, Math, Windows, Globals, GlobalsV, GR_Main, GI_Main, GI_Panel, GI_Image, GI_GAI, GI_PanelScrollBar, GI_ScrollBar, GI_GraphButton, GI_Window, GI_Frame, fListBox, aGalaxy, aGalaxyStruct, aGroup, aConst, aShip, aPlayer, aPlanet, aScript, aMyFunction, aSaveLoad, fSaveManager, fHangar, fShip2, fTalk, ThreadCalc, aCalc, aItem, Achievements, aPirate, aNormalShip, aWarrior, Robot, fPlanetQuest;
+
+var DirectStrategicCall: Boolean = False;
+
+{ @routine $F0000030 OpenStrategicPlanet }
+procedure OpenStrategicPlanet(Parent: TMessageLoopGI; Planet: TPlanet);
+var Screen: TStrategicScreen; State: TCursorStateGI;
+begin
+  if (Parent = nil) or (Planet = nil) or not Planet.IsCoalitionOwned then Exit;
+  Parent.RootUiObject.NativeHook50;
+  Parent.CaptureCursorState(@State);
+  Parent.SetCursorActive(False);
+  Parent.DrawQueuedUpdateRects;
+  CaptureScreenBackground(False, 0);
+  Screen := TStrategicScreen.Create;
+  try
+    Screen.ParentLoop := Parent;
+    Parent.ChildLoop := Screen;
+    Screen.InitializeDefaults;
+    Screen.Gov := GovernmentScreen;
+    Screen.InitialPlanet := Planet;
+    Screen.DirectMode := True;
+    Screen.Run;
+  finally
+    Parent.ChildLoop := nil;
+    Screen.Free;
+    Parent.InvalidateViewport;
+    Parent.RestoreCursorState(@State);
+    Parent.UpdateCursorPosition;
+    Parent.RootUiObject.NativeHook48;
+  end;
+end;
+{ @end $F0000030 }
+
+{ @routine $F0000010 TStrategicScreen_OnOpen }
+procedure TStrategicScreen.OnOpen;
+var Window: TWindowGI; CloseButton: TGraphButtonGI; Title, LabelControl: TLabelGI;
+  Frame: TFrameGI; W, H, LeftWidth, RightX, RightWidth, I, Y: Integer; Planet: TPlanet;
+  procedure AddAction(Caption: WideString; Action, Column, Row: Integer);
+  var ButtonLabel: TLabelGI; Border: TFrameGI; X, Top, ButtonWidth: Integer;
+  begin
+    ButtonWidth := (RightWidth - 12) div 2;
+    X := RightX + Column * (ButtonWidth + 8);
+    Top := GiScalePixels(255) + Row * GiScalePixels(30);
+    Border := TFrameGI.Create(ContentPanel);
+    Border.SetPosition(Classes.Point(X, Top));
+    Border.SetSize(Classes.Point(ButtonWidth, GiScalePixels(25)));
+    Border.SetKind(fkRect);
+    Border.SetColor(CurrentPixelFormat.PackRgbBytes(45, 65, 95));
+    Border.SetFillColor(CurrentPixelFormat.PackRgbBytes(222, 230, 235));
+    Border.SetFill(True);
+    ButtonLabel := TLabelGI.Create(ContentPanel);
+    ButtonLabel.SetPosition(Classes.Point(X + 3, Top));
+    ButtonLabel.SetSize(Classes.Point(ButtonWidth - 6, GiScalePixels(25)));
+    ButtonLabel.SetTextAlignX(taxCenter);
+    ButtonLabel.SetTextAlignY(tayCenter);
+    ButtonLabel.SetFontName(NormalFontName);
+    ButtonLabel.SetTextColor(CurrentPixelFormat.PackRgbBytes(0, 40, 140));
+    ButtonLabel.SetText(Caption);
+    ButtonLabel.UserValue := Action;
+    ButtonLabel.LeftButtonDownCallback := ActionClicked;
+  end;
+begin
+  W := Min(GameScreenWidth - 20, GiScalePixels(850));
+  H := Min(GameScreenHeight - 20, GiScalePixels(600));
+  LeftWidth := (W - GiScalePixels(55)) * 43 div 100;
+  RightX := LeftWidth + GiScalePixels(35);
+  RightWidth := W - RightX - GiScalePixels(20);
+  Window := TWindowGI.Create(ContentPanel);
+  Window.SetDepth(1);
+  Window.SetConfigPath('Style.Window.' + GiResourceSuffix + 'MessageBox');
+  Window.SetSize(Classes.Point(W, H));
+  Window.UpdateAutoGeometry;
+  Title := TLabelGI.Create(ContentPanel);
+  Title.SetPosition(Classes.Point(0, GiScalePixels(25)));
+  Title.SetSize(Classes.Point(W, GiScalePixels(25)));
+  Title.SetTextAlignX(taxCenter); Title.SetTextAlignY(tayCenter);
+  Title.SetFontName(NormalBoldFontName);
+  Title.SetTextColor(CurrentPixelFormat.PackRgbBytes(0, 0, 0));
+  Title.SetText('Стратегическое командование — планеты и флоты');
+  PlanetList := TPanelScrollBarGI.Create(ContentPanel);
+  PlanetList.SetDepth(0);
+  PlanetList.SetUnlimitedWorldEnabled(False);
+  PlanetList.SetScrollbarsOutside(True);
+  PlanetList.SetVerticalScrollBarConfigPath('Style.ScrollBar.' + GiResourceSuffix + 'PQS2');
+  PlanetList.SetHorizontalScrollbarEnabled(False);
+  PlanetList.SetVerticalScrollbarEnabled(True);
+  PlanetList.SetPosition(Classes.Point(GiScalePixels(20), GiScalePixels(65)));
+  PlanetList.SetSize(Classes.Point(LeftWidth, H - GiScalePixels(120)));
+  PlanetList.ScrollAxis := psaVertical;
+  Frame := TFrameGI.Create(ContentPanel);
+  Frame.SetPosition(Classes.Point(GiScalePixels(19), GiScalePixels(64)));
+  Frame.SetSize(Classes.Point(LeftWidth + 2, H - GiScalePixels(118)));
+  Frame.SetKind(fkRect); Frame.SetColor(CurrentPixelFormat.PackRgbBytes(0, 0, 0));
+  Y := 0; SelectedPlanet := -1;
+  for I := 0 to Galaxy.Planets.Count - 1 do begin
+    Planet := TPlanet(Galaxy.Planets[I]);
+    if not Planet.IsCoalitionOwned then Continue;
+    if SelectedPlanet < 0 then SelectedPlanet := I;
+    LabelControl := TLabelGI.Create(PlanetList);
+    LabelControl.SetPositionModeW(True);
+    LabelControl.SetPosition(Classes.Point(2, Y));
+    LabelControl.SetSize(Classes.Point(LeftWidth - GiScalePixels(6), GiScalePixels(24)));
+    LabelControl.SetFontName(NormalFontName);
+    LabelControl.SetTextAlignY(tayCenter);
+    LabelControl.SetTextColor(CurrentPixelFormat.PackRgbBytes(0, 40, 150));
+    LabelControl.SetText(Planet.GetFullName(' ') + ' / ' + Planet.CurrentStar.Name);
+    LabelControl.UserValue := I;
+    LabelControl.LeftButtonDownCallback := SelectPlanet;
+    Inc(Y, GiScalePixels(24));
+  end;
+  if (InitialPlanet <> nil) and InitialPlanet.IsCoalitionOwned then
+    SelectedPlanet := Galaxy.Planets.IndexOf(InitialPlanet);
+  PlanetList.UpdateScrollbarPlacement; PlanetList.UpdateScrollRanges;
+  PlanetList.VerticalScrollBar.SetSmallChange(GiScalePixels(24));
+  PlanetList.VerticalScrollBar.SetLargeChange(PlanetList.ClientSize.Y);
+  PlanetList.VerticalScrollBar.SetPageSize(PlanetList.ClientSize.Y);
+  Details := TLabelGI.Create(ContentPanel);
+  Details.SetPosition(Classes.Point(RightX, GiScalePixels(65)));
+  Details.SetSize(Classes.Point(RightWidth, GiScalePixels(180)));
+  Details.SetWordWrapEnabled(True); Details.SetFontName(NormalFontName);
+  Details.SetTextColor(CurrentPixelFormat.PackRgbBytes(0, 0, 0));
+  AddAction('Продовольствие', 1, 0, 0);
+  AddAction('Двигатели +1', 2, 1, 0);
+  AddAction('Защита и оружие +1', 3, 0, 1);
+  AddAction('Построить защитника', 4, 1, 1);
+  AddAction('Научная ветка', 5, 0, 2);
+  AddAction('Промышленная ветка', 6, 1, 2);
+  AddAction('Поднять гарнизон', 7, 0, 3);
+  AddAction('Вернуть гарнизон', 8, 1, 3);
+  AddAction('Отправить 1 корабль', 20, 0, 4);
+  AddAction('Отправить флот', 21, 1, 4);
+  AddAction('Отозвать флоты', 9, 0, 5);
+  Status := TLabelGI.Create(ContentPanel);
+  Status.SetPosition(Classes.Point(RightX, GiScalePixels(440)));
+  Status.SetSize(Classes.Point(RightWidth, H - GiScalePixels(490)));
+  Status.SetWordWrapEnabled(True); Status.SetFontName(NormalFontName);
+  Status.SetTextColor(CurrentPixelFormat.PackRgbBytes(0, 40, 130));
+  Status.SetText('Выберите планету и действие.');
+  CloseButton := TGraphButtonGI.Create(ContentPanel);
+  CloseButton.SetDepth(0);
+  CloseButton.SetImageNormalPath('GI,Bm.FormMessageBox.' + GiResourceSuffix + 'CancelN');
+  CloseButton.SetImageNormalActivePath('GI,Bm.FormMessageBox.' + GiResourceSuffix + 'CancelA');
+  CloseButton.SetImageDownPath('GI,Bm.FormMessageBox.' + GiResourceSuffix + 'CancelD');
+  CloseButton.SetSize(CloseButton.GetMaxStateImageSize);
+  CloseButton.SetPosition(Classes.Point(W - CloseButton.ClientSize.X - GiScalePixels(20), H - CloseButton.ClientSize.Y - GiScalePixels(20)));
+  CloseButton.HitKind := gbhRect; CloseButton.UpOnlyDown := True;
+  CloseButton.UpdateStateImagePlacement; CloseButton.UpdateStateVisuals;
+  CloseButton.UpCallback := CloseClicked;
+  ViewportRect := Classes.Rect((GameScreenWidth-W) div 2, (GameScreenHeight-H) div 2, (GameScreenWidth+W) div 2, (GameScreenHeight+H) div 2);
+  ContentPanel.SetPosition(ViewportRect.TopLeft); ContentPanel.SetSize(Classes.Point(W,H));
+  ContentPanel.UpdateAbsolutePosition; ContentPanel.UpdateSubtreeHitBounds;
+  RefreshDetails;
+end;
+{ @end $F0000010 }
+
+{ @routine $F0000011 TStrategicScreen_ProcessMouseWheel }
+procedure TStrategicScreen.ProcessMouseWheel(KeyState: Cardinal; Point: TPoint; Delta: Integer);
+begin
+  with PlanetList.VerticalScrollBar do
+    if Delta = WHEEL_DELTA then SetPosition(Position - SmallChange)
+    else if Delta = -WHEEL_DELTA then SetPosition(Position + SmallChange);
+end;
+{ @end $F0000011 }
+
+{ @routine $F0000012 TStrategicScreen_SelectPlanet }
+procedure TStrategicScreen.SelectPlanet(Sender: TObjectGI; KeyState: Cardinal; Point: TPoint);
+begin
+  SelectedPlanet := Sender.UserValue;
+  Status.SetText('Планета выбрана.');
+  RefreshDetails;
+end;
+{ @end $F0000012 }
+
+{ @routine $F0000015 TStrategicScreen_RefreshDetails }
+procedure TStrategicScreen.RefreshDetails;
+var Planet: TPlanet; Ship: TShip; Group: TGroup; I, FleetCount, Travelling, AtTarget, Returning, Payload, Code: Integer; Text: WideString;
+begin
+  if (SelectedPlanet < 0) or (SelectedPlanet >= Galaxy.Planets.Count) then begin Details.SetText('Нет доступных планет.'); Exit; end;
+  Planet := TPlanet(Galaxy.Planets[SelectedPlanet]);
+  FleetCount := 0; Travelling := 0; AtTarget := 0; Returning := 0;
+  for I := 0 to Planet.Warriors.Count - 1 do begin
+    Ship := TShip(Planet.Warriors[I]);
+    if Ship.LiberationGroup = nil then Continue;
+    Group := TGroup(Ship.LiberationGroup);
+    if not Group.IsStrategicFleet then Continue;
+    Inc(FleetCount);
+    if Group.Route[2].WaitMode = 42 then Inc(Returning)
+    else if not Ship.IsOutsideStarSpace and (Ship.CurrentStar = Group.Route[3].Target) then Inc(AtTarget)
+    else Inc(Travelling);
+  end;
+  Text := Planet.GetFullName(' ') + ' / ' + Planet.CurrentStar.Name + #13#10 +
+    'Бюджет: ' + IntToStr(Planet.Money) + ' cr.; население: ' + IntToStr(Planet.Population) + #13#10 +
+    'Гарнизон: ' + IntToStr(Planet.Warriors.Count) + '; назначено во флот: ' + IntToStr(FleetCount) + #13#10 +
+    'В пути: ' + IntToStr(Travelling) + '; в системе: ' + IntToStr(AtTarget) + '; возвращаются: ' + IntToStr(Returning) + #13#10 +
+    'Двигатели L' + IntToStr(Planet.InventionLevels[2]) + '; защита и оружие L' + IntToStr(Planet.InventionLevels[7]);
+  if (Planet.ReservedSaveValue >= StrategyOrderMarker) and (Planet.ReservedSaveValue < StrategyOrderMarker + 500000000) then begin
+    Payload := Planet.ReservedSaveValue - StrategyOrderMarker;
+    Code := Payload mod StrategyOrderCodeFactor;
+    if Code <> 0 then Text := Text + #13#10 + 'Заказ завершится в день ' + IntToStr(Payload div StrategyOrderTurnFactor)
+    else Text := Text + #13#10 + 'Очередь свободна.';
+  end else Text := Text + #13#10 + 'Очередь свободна.';
+  Details.SetText(Text);
+end;
+{ @end $F0000015 }
+
+{ @routine $F0000013 TStrategicScreen_ActionClicked }
+procedure TStrategicScreen.ActionClicked(Sender: TObjectGI; KeyState: Cardinal; Point: TPoint);
+var Action, I, J, N, Selection, FleetMode: Integer; Planet: TPlanet; Star: TStar; Ship: TShip; Items, StarIndices: TList; Name: PWideString;
+begin
+  if (SelectedPlanet < 0) or (SelectedPlanet >= Galaxy.Planets.Count) then Exit;
+  Planet := TPlanet(Galaxy.Planets[SelectedPlanet]);
+  if not Planet.IsCoalitionOwned then begin Status.SetText('Планета больше не принадлежит Коалиции.'); Exit; end;
+  Action := Sender.UserValue;
+  if Action < 20 then begin
+    DirectStrategicCall := DirectMode;
+    try
+      Gov.RunInjectedAnswer(-20000 - SelectedPlanet * 10 - Action);
+    finally
+      DirectStrategicCall := False;
+    end;
+  end
+  else begin
+    FleetMode := Action - 20;
+    Items := TList.Create; StarIndices := TList.Create;
+    try
+      for I := 0 to Galaxy.Stars.Count - 1 do begin
+        if I >= 1000 then Break;
+        Star := TStar(Galaxy.Stars[I]);
+        if Star = Planet.CurrentStar then Continue;
+        N := 0;
+        for J := 0 to Planet.Warriors.Count - 1 do begin
+          Ship := TShip(Planet.Warriors[J]);
+          if ((Ship.CurrentPlanet = Planet) or (Ship.InNormalSpace and (Ship.CurrentStar = Planet.CurrentStar) and (Ship.Order in [soNone, soMove]))) and
+            (Ship.ScriptShip = nil) and (Ship.AbsoluteScriptOrder = 0) and (Ship.LiberationGroup = nil) and
+            (Ship.GetFuelLimitedJumpRange >= Round(PointDistance(Planet.CurrentStar.Position, Star.Position))) then Inc(N);
+        end;
+        if N > 0 then begin
+          New(Name); Name^ := Star.Name + ' — кораблей: ' + IntToStr(N);
+          Items.Add(Name); StarIndices.Add(Pointer(I));
+        end;
+      end;
+      if Items.Count = 0 then begin Status.SetText('Нет систем, доступных для прямого прыжка свободных кораблей.'); Exit; end;
+      Selection := -1;
+      ShowListDialog(Self, Selection, 'Система назначения', Items, 0, 0);
+      if (Selection < 0) or (Selection >= Items.Count) then Exit;
+      I := Integer(StarIndices[Selection]);
+      DirectStrategicCall := DirectMode;
+      try
+        Gov.RunInjectedAnswer(-100000 - SelectedPlanet * 2000 - FleetMode * 1000 - I);
+      finally
+        DirectStrategicCall := False;
+      end;
+    finally
+      for I := 0 to Items.Count - 1 do begin Name := Items[I]; Dispose(Name); end;
+      StarIndices.Free; Items.Free;
+    end;
+  end;
+  Status.SetText(Gov.DialogText);
+  RefreshDetails;
+end;
+{ @end $F0000013 }
+
+{ @routine $F0000014 TStrategicScreen_CloseClicked }
+procedure TStrategicScreen.CloseClicked(Sender: TObjectGI);
+begin
+  RequestClose(1);
+end;
+{ @end $F0000014 }
 
 { @routine $5247FC TfGov_Create }
 constructor TfGov.Create;
@@ -1144,6 +1431,9 @@ begin
     AddChoice(LocalizedColorText('FormGov.BuyMap.I_BuyMap'), 0, ShowMapOffer);
   if GetPlayer.CurrentPlanet.CountBailablePrisoners > 0 then
     AddChoice(LocalizedColorText('FormGov.GuarantPrison.PlayerAsk'), 0, ShowPrisonBail);
+  AddChoice('Стратегическое командование Коалиции', -10100, RunInjectedAnswer);
+  AddChoice('Открыть окно управления планетами и флотами', -10200, RunInjectedAnswer);
+  AddChoice('Планетарное управление (тест)', -10000, RunInjectedAnswer);
   AddChoice(LocalizedColorText('FormGov.I_Exit'), 0, ReturnToPlanet);
 end;
 { @end $5297FC }
@@ -1839,7 +2129,539 @@ end;
 { @routine $52DB2C TfGov_RunInjectedAnswer }
 procedure TfGov.RunInjectedAnswer(Answer: Integer);
 var Injection: PScriptDialogInjection; Text: WideString; PartCount: Integer;
+  Item: TEquipment;
+  Ship: TShip;
+  ItemType: Byte;
+  Cost: Integer;
+  TechLevel: Byte;
+  Owner: Byte;
+  I, CoalitionCount, RemoteAction, RemoteIndex, OrderCompleteTurn: Integer;
+  StrategyPayload, StrategyOrderCode, StrategySpecialization, StrategyLevel: Integer;
+  DevelopmentCost, DevelopmentDays: Integer;
+  ScienceLevel, IndustryLevel, ProductionAmount, DevelopmentSpecialization, ActiveDefenders: Integer;
+  Prototype: Boolean;
+  Planet: TPlanet;
+  TargetStar: TStar;
+  Fleet: TGroup;
+  FleetMode, StarIndex, Available, FleetSize: Integer;
+  StrategicScreen: TStrategicScreen;
+  CursorState: TCursorStateGI;
+  ScreenResult: Cardinal;
 begin
+  if Answer = -10200 then
+  begin
+    RootUiObject.NativeHook50;
+    CaptureCursorState(@CursorState);
+    SetCursorActive(False);
+    DrawQueuedUpdateRects;
+    CaptureScreenBackground(False, 0);
+    StrategicScreen := TStrategicScreen.Create;
+    StrategicScreen.ParentLoop := Self;
+    ChildLoop := StrategicScreen;
+    StrategicScreen.InitializeDefaults;
+    StrategicScreen.Gov := Self;
+    try
+      ScreenResult := StrategicScreen.Run;
+      InvalidateViewport;
+    finally
+      ChildLoop := nil;
+      StrategicScreen.Free;
+    end;
+    RestoreCursorState(@CursorState);
+    UpdateCursorPosition;
+    RootUiObject.NativeHook48;
+    if ScreenResult = 254 then BreakUiMessage;
+    Exit;
+  end;
+  if (Answer <= -100000) and (Answer > -2100000) then
+  begin
+    I := (-100000 - Answer) div 2000;
+    FleetMode := ((-100000 - Answer) mod 2000) div 1000;
+    StarIndex := (-100000 - Answer) mod 1000;
+    if (I >= Galaxy.Planets.Count) or (StarIndex >= Galaxy.Stars.Count) then Exit;
+    Planet := TPlanet(Galaxy.Planets[I]);
+    TargetStar := TStar(Galaxy.Stars[StarIndex]);
+    if not Planet.IsCoalitionOwned or (TargetStar = Planet.CurrentStar) then Exit;
+    Fleet := TGroup.Create;
+    Galaxy.LiberationGroups.Add(Fleet);
+    Fleet.GenerationSeed := StrategicFleetSeed;
+    SetLength(Fleet.Route, 4);
+    Fleet.Route[0].Kind := 3; Fleet.Route[0].Target := Planet.CurrentStar;
+    Fleet.Route[1].Kind := 3; Fleet.Route[1].Target := Planet.CurrentStar;
+    Fleet.Route[2].Kind := 3; Fleet.Route[2].Target := Planet.CurrentStar;
+    Fleet.Route[3].Kind := 3; Fleet.Route[3].Target := TargetStar;
+    FleetSize := 0;
+    for RemoteIndex := 0 to Planet.Warriors.Count - 1 do
+    begin
+      Ship := TShip(Planet.Warriors[RemoteIndex]);
+      if ((Ship.CurrentPlanet = Planet) or
+          (Ship.InNormalSpace and (Ship.CurrentStar = Planet.CurrentStar) and (Ship.Order in [soNone, soMove]))) and (Ship.ScriptShip = nil) and
+         (Ship.AbsoluteScriptOrder = 0) and (Ship.LiberationGroup = nil) and
+         (Ship.GetFuelLimitedJumpRange >= Round(PointDistance(Planet.CurrentStar.Position, TargetStar.Position))) then
+      begin
+        if Planet.CurrentStar.Ships.IndexOf(Ship) < 0 then Planet.CurrentStar.Ships.Add(Ship);
+        Fleet.AddShip(Ship);
+        if Ship.CurrentPlanet = Planet then Ship.OrderTakeoff else Ship.OrderNone(False);
+        Inc(FleetSize);
+        if (FleetMode = 0) or (FleetSize >= 30) then Break;
+      end;
+    end;
+    if FleetSize = 0 then
+    begin
+      Fleet.Disband;
+      DialogText := 'Нет свободных кораблей с достаточным запасом топлива и дальностью прыжка до выбранной системы.';
+    end
+    else DialogText := 'Флот отправлен из системы ' + Planet.CurrentStar.Name + ' в систему ' + TargetStar.Name +
+      '. Кораблей: ' + IntToStr(FleetSize) + '. После прибытия они будут патрулировать систему до приказа об отзыве.';
+    if not DirectStrategicCall then begin
+      ClearDialogChoices;
+      AddChoice('Вернуться к планете', -11000 - I, RunInjectedAnswer);
+      AddChoice('К списку планет', -10100, RunInjectedAnswer);
+    end;
+    Exit;
+  end;
+  if (Answer <= -30000) and (Answer > -32000) then
+  begin
+    I := (-30000 - Answer) div 2;
+    FleetMode := (-30000 - Answer) mod 2;
+    if I >= Galaxy.Planets.Count then Exit;
+    Planet := TPlanet(Galaxy.Planets[I]);
+    if not Planet.IsCoalitionOwned then Exit;
+    DialogText := 'Выберите систему назначения для экспедиции с планеты ' + Planet.GetFullName(' ') +
+      '. Показывается число доступных кораблей, способных совершить прямой прыжок.';
+    ClearDialogChoices;
+    for StarIndex := 0 to Galaxy.Stars.Count - 1 do
+    begin
+      if StarIndex >= 1000 then Break;
+      TargetStar := TStar(Galaxy.Stars[StarIndex]);
+      if TargetStar = Planet.CurrentStar then Continue;
+      Available := 0;
+      for RemoteIndex := 0 to Planet.Warriors.Count - 1 do
+      begin
+        Ship := TShip(Planet.Warriors[RemoteIndex]);
+        if ((Ship.CurrentPlanet = Planet) or
+            (Ship.InNormalSpace and (Ship.CurrentStar = Planet.CurrentStar) and (Ship.Order in [soNone, soMove]))) and (Ship.ScriptShip = nil) and
+           (Ship.AbsoluteScriptOrder = 0) and (Ship.LiberationGroup = nil) and
+           (Ship.GetFuelLimitedJumpRange >= Round(PointDistance(Planet.CurrentStar.Position, TargetStar.Position))) then Inc(Available);
+      end;
+      if Available > 0 then AddChoice(TargetStar.Name + ' — доступно: ' + IntToStr(Available),
+        -100000 - I * 2000 - FleetMode * 1000 - StarIndex, RunInjectedAnswer);
+    end;
+    AddChoice('Вернуться к планете', -11000 - I, RunInjectedAnswer);
+    Exit;
+  end;
+  if Answer = -10100 then
+  begin
+    CoalitionCount := 0;
+    DialogText := 'Стратегическое командование Коалиции.' + #13#10 +
+      'Выберите планету для удалённого управления. Сейчас доступны все планеты Коалиции; позднее доступ будет зависеть от связи, контроля системы и назначенных губернаторов.';
+    ClearDialogChoices;
+    for I := 0 to Galaxy.Planets.Count - 1 do
+    begin
+      Planet := TPlanet(Galaxy.Planets[I]);
+      if Planet.IsCoalitionOwned then
+      begin
+        Inc(CoalitionCount);
+        AddChoice(Planet.GetFullName(' ') + ' — ' + Planet.CurrentStar.Name +
+          '; бюджет ' + IntToStr(Planet.Money) + ' cr.; гарнизон ' + IntToStr(Planet.Warriors.Count), -11000 - I, RunInjectedAnswer);
+      end;
+    end;
+    if CoalitionCount = 0 then
+      DialogText := DialogText + #13#10 + 'Доступных планет Коалиции пока нет.';
+    AddChoice('Назад к правительству', -10099, RunInjectedAnswer);
+    Exit;
+  end;
+  if (Answer <= -11000) and (Answer > -12000) then
+  begin
+    I := -11000 - Answer;
+    if (I >= 0) and (I < Galaxy.Planets.Count) then
+    begin
+      Planet := TPlanet(Galaxy.Planets[I]);
+      if Planet.IsCoalitionOwned then
+      begin
+        ActiveDefenders := 0;
+        for RemoteIndex := 0 to Planet.Warriors.Count - 1 do
+          if TShip(Planet.Warriors[RemoteIndex]).CurrentPlanet = nil then Inc(ActiveDefenders);
+        DialogText := Planet.GetFullName(' ') + ' в системе ' + Planet.CurrentStar.Name + '.' + #13#10 +
+          'Бюджет: ' + IntToStr(Planet.Money) + ' cr.; население: ' + IntToStr(Planet.Population) +
+          '; гарнизон: ' + IntToStr(Planet.Warriors.Count) + ', в космосе: ' + IntToStr(ActiveDefenders) + '.' + #13#10 +
+          'Двигатели L' + IntToStr(Planet.InventionLevels[2]) +
+          '; защита и оружие L' + IntToStr(Planet.InventionLevels[7]) + '.';
+        StrategyPayload := 0;
+        StrategyOrderCode := 0;
+        StrategySpecialization := StrategySpecializationNone;
+        StrategyLevel := 0;
+        if (Planet.ReservedSaveValue >= StrategyOrderMarker) and
+           (Planet.ReservedSaveValue < StrategyOrderMarker + 500000000) then
+        begin
+          StrategyPayload := Planet.ReservedSaveValue - StrategyOrderMarker;
+          OrderCompleteTurn := StrategyPayload div StrategyOrderTurnFactor;
+          StrategyOrderCode := StrategyPayload mod StrategyOrderCodeFactor;
+          StrategySpecialization := (StrategyPayload div StrategyOrderSpecializationFactor) mod 8;
+          StrategyLevel := (StrategyPayload div StrategyOrderLevelFactor) mod 4;
+        end;
+        if StrategySpecialization = StrategySpecializationScience then
+          DialogText := DialogText + #13#10 + 'Научная ветка: уровень ' + IntToStr(StrategyLevel) + ' из 3.';
+        if StrategySpecialization = StrategySpecializationIndustry then
+          DialogText := DialogText + #13#10 + 'Промышленная ветка: уровень ' + IntToStr(StrategyLevel) + ' из 3.';
+        if StrategyOrderCode <> 0 then
+        begin
+          DialogText := DialogText + #13#10 + 'Активный стратегический заказ завершится в день ' + IntToStr(OrderCompleteTurn) + '.';
+        end
+        else
+          DialogText := DialogText + #13#10 + 'Очередь производства свободна.';
+        ClearDialogChoices;
+        AddChoice('Заказать продовольствие (+100, 400 cr., 2 дня)', -20000 - I * 10 - 1, RunInjectedAnswer);
+        AddChoice('Исследовать двигатели (+1 уровень, 25000 cr., 7 дней)', -20000 - I * 10 - 2, RunInjectedAnswer);
+        AddChoice('Исследовать защиту и оружие (+1 уровень, 40000 cr., 10 дней)', -20000 - I * 10 - 3, RunInjectedAnswer);
+        AddChoice('Построить защитника (30000 cr., 12 дней)', -20000 - I * 10 - 4, RunInjectedAnswer);
+        if (StrategySpecialization in [StrategySpecializationNone, StrategySpecializationScience]) and (StrategyLevel < 3) then
+          AddChoice('Развивать научную ветку до уровня ' + IntToStr(StrategyLevel + 1), -20000 - I * 10 - 5, RunInjectedAnswer);
+        if (StrategySpecialization in [StrategySpecializationNone, StrategySpecializationIndustry]) and (StrategyLevel < 3) then
+          AddChoice('Развивать промышленную ветку до уровня ' + IntToStr(StrategyLevel + 1), -20000 - I * 10 - 6, RunInjectedAnswer);
+        AddChoice('Поднять гарнизон на оборону системы', -20000 - I * 10 - 7, RunInjectedAnswer);
+        AddChoice('Вернуть гарнизон на планету', -20000 - I * 10 - 8, RunInjectedAnswer);
+        AddChoice('Отправить один корабль в другую систему', -30000 - I * 2, RunInjectedAnswer);
+        AddChoice('Отправить флот в другую систему (до 30 кораблей)', -30001 - I * 2, RunInjectedAnswer);
+        AddChoice('Отозвать назначенные флоты на родную планету', -20000 - I * 10 - 9, RunInjectedAnswer);
+        AddChoice('К списку планет', -10100, RunInjectedAnswer);
+        AddChoice('Назад к правительству', -10099, RunInjectedAnswer);
+        Exit;
+      end;
+    end;
+  end;
+  if (Answer <= -20001) and (Answer > -30000) then
+  begin
+    RemoteIndex := (-20000 - Answer) div 10;
+    RemoteAction := (-20000 - Answer) mod 10;
+    if (RemoteIndex < 0) or (RemoteIndex >= Galaxy.Planets.Count) then Exit;
+    Planet := TPlanet(Galaxy.Planets[RemoteIndex]);
+    if not Planet.IsCoalitionOwned then Exit;
+    StrategyPayload := 0;
+    StrategyOrderCode := 0;
+    StrategySpecialization := StrategySpecializationNone;
+    StrategyLevel := 0;
+    if (Planet.ReservedSaveValue >= StrategyOrderMarker) and
+       (Planet.ReservedSaveValue < StrategyOrderMarker + 500000000) then
+    begin
+      StrategyPayload := Planet.ReservedSaveValue - StrategyOrderMarker;
+      StrategyOrderCode := StrategyPayload mod StrategyOrderCodeFactor;
+      StrategySpecialization := (StrategyPayload div StrategyOrderSpecializationFactor) mod 8;
+      StrategyLevel := (StrategyPayload div StrategyOrderLevelFactor) mod 4;
+    end;
+    ScienceLevel := 0;
+    IndustryLevel := 0;
+    if StrategySpecialization = StrategySpecializationScience then ScienceLevel := StrategyLevel;
+    if StrategySpecialization = StrategySpecializationIndustry then IndustryLevel := StrategyLevel;
+    if (StrategyOrderCode <> 0) and (RemoteAction <= 6) then
+      DialogText := 'Нельзя поставить заказ: очередь производства этой планеты занята.'
+    else
+    case RemoteAction of
+      1:
+        if Planet.Money < 400 then DialogText := 'Недостаточно средств в бюджете планеты.'
+        else begin Dec(Planet.Money, 400); Planet.ReservedSaveValue := StrategyOrderMarker + (Galaxy.CurrentTurn + 2) * StrategyOrderTurnFactor + StrategySpecialization * StrategyOrderSpecializationFactor + StrategyLevel * StrategyOrderLevelFactor + StrategyOrderFood; DialogText := 'Заказ принят: продовольствие будет готово в день ' + IntToStr(Galaxy.CurrentTurn + 2) + '.'; end;
+      2:
+        if Planet.Money < 25000 then DialogText := 'Недостаточно средств в бюджете планеты.'
+        else if Planet.InventionLevels[2] >= 8 then DialogText := 'Технология двигателей уже достигла L8.'
+        else begin Dec(Planet.Money, 25000); Planet.ReservedSaveValue := StrategyOrderMarker + (Galaxy.CurrentTurn + 7 - ScienceLevel) * StrategyOrderTurnFactor + StrategySpecialization * StrategyOrderSpecializationFactor + StrategyLevel * StrategyOrderLevelFactor + StrategyOrderEngineResearch; DialogText := 'Заказ принят: технология двигателей будет повышена в день ' + IntToStr(Galaxy.CurrentTurn + 7 - ScienceLevel) + '.'; end;
+      3:
+        if Planet.Money < 40000 then DialogText := 'Недостаточно средств в бюджете планеты.'
+        else if Planet.InventionLevels[7] >= 8 then DialogText := 'Главная технология уже достигла L8.'
+        else begin Dec(Planet.Money, 40000); Planet.ReservedSaveValue := StrategyOrderMarker + (Galaxy.CurrentTurn + 10 - ScienceLevel) * StrategyOrderTurnFactor + StrategySpecialization * StrategyOrderSpecializationFactor + StrategyLevel * StrategyOrderLevelFactor + StrategyOrderMainResearch; DialogText := 'Заказ принят: технология будет повышена в день ' + IntToStr(Galaxy.CurrentTurn + 10 - ScienceLevel) + '.'; end;
+      4:
+        begin
+          DevelopmentCost := 30000 - IndustryLevel * 3000;
+          DevelopmentDays := 12 - IndustryLevel;
+          if Planet.Money < DevelopmentCost then DialogText := 'Недостаточно средств в бюджете планеты.'
+        else
+        begin
+          Dec(Planet.Money, DevelopmentCost);
+          Planet.ReservedSaveValue := StrategyOrderMarker + (Galaxy.CurrentTurn + DevelopmentDays) * StrategyOrderTurnFactor + StrategySpecialization * StrategyOrderSpecializationFactor + StrategyLevel * StrategyOrderLevelFactor + StrategyOrderDefender;
+          DialogText := 'Заказ принят: защитник будет добавлен в гарнизон в день ' + IntToStr(Galaxy.CurrentTurn + DevelopmentDays) + '.';
+        end;
+        end;
+      5, 6:
+        begin
+          if RemoteAction = 5 then DevelopmentSpecialization := StrategySpecializationScience
+          else DevelopmentSpecialization := StrategySpecializationIndustry;
+        if not (StrategySpecialization in [StrategySpecializationNone, DevelopmentSpecialization]) then
+          DialogText := 'Эта планета уже развивает другую ветку.'
+        else if StrategyLevel >= 3 then
+          DialogText := 'Эта ветка уже достигла максимального уровня III.'
+        else
+        begin
+          case StrategyLevel + 1 of
+            1: begin DevelopmentCost := 50000; DevelopmentDays := 8; end;
+            2: begin DevelopmentCost := 100000; DevelopmentDays := 15; end;
+          else begin DevelopmentCost := 180000; DevelopmentDays := 25; end;
+          end;
+          if Planet.Money < DevelopmentCost then
+            DialogText := 'Недостаточно средств в бюджете планеты. Нужно: ' + IntToStr(DevelopmentCost) + ' cr.'
+          else
+          begin
+            Dec(Planet.Money, DevelopmentCost);
+            Planet.ReservedSaveValue := StrategyOrderMarker + (Galaxy.CurrentTurn + DevelopmentDays) * StrategyOrderTurnFactor +
+              DevelopmentSpecialization * StrategyOrderSpecializationFactor + (StrategyLevel + 1) * StrategyOrderLevelFactor + StrategyOrderScienceDevelopment;
+            DialogText := 'Проект ветки развития принят. Уровень ' + IntToStr(StrategyLevel + 1) +
+              ' станет активен в день ' + IntToStr(Galaxy.CurrentTurn + DevelopmentDays) + '.';
+          end;
+        end;
+        end;
+      7:
+        begin
+          ActiveDefenders := 0;
+          for I := 0 to Planet.Warriors.Count - 1 do
+          begin
+            Ship := TShip(Planet.Warriors[I]);
+            if (Ship.CurrentPlanet = Planet) and (Ship.LiberationGroup = nil) then
+            begin
+              if Planet.CurrentStar.Ships.IndexOf(Ship) = -1 then Planet.CurrentStar.Ships.Add(Ship);
+              Ship.OrderTakeoff;
+              Inc(ActiveDefenders);
+            end;
+          end;
+          DialogText := 'Приказ обороны передан. В космос поднято кораблей: ' + IntToStr(ActiveDefenders) + '.';
+        end;
+      8:
+        begin
+          ActiveDefenders := 0;
+          for I := 0 to Planet.Warriors.Count - 1 do
+          begin
+            Ship := TShip(Planet.Warriors[I]);
+            if (Ship.CurrentPlanet <> Planet) and (Ship.LiberationGroup = nil) then
+            begin
+              if Ship.CurrentStar = Planet.CurrentStar then Ship.OrderLanding(Planet, True)
+              else TWarrior(Ship).NavigateToHomePlanet;
+              Inc(ActiveDefenders);
+            end;
+          end;
+          DialogText := 'Приказ возвращения передан кораблям: ' + IntToStr(ActiveDefenders) + '.';
+        end;
+      9:
+        begin
+          ActiveDefenders := 0;
+          for I := 0 to Planet.Warriors.Count - 1 do
+          begin
+            Ship := TShip(Planet.Warriors[I]);
+            if (Ship.LiberationGroup <> nil) and TGroup(Ship.LiberationGroup).IsStrategicFleet then
+            begin
+              Fleet := TGroup(Ship.LiberationGroup);
+              Fleet.Route[2].WaitMode := 42;
+              Fleet.Route[3].Target := Planet.CurrentStar;
+              Ship.LiberationGroupRouteIndex := 3;
+              if Ship.InNormalSpace and not (Ship.Order in [soJump, soLand]) then Ship.OrderNone(False);
+              Inc(ActiveDefenders);
+            end;
+          end;
+          DialogText := 'Приказ возвращения передан кораблям: ' + IntToStr(ActiveDefenders) +
+            '. Они сохранят приказ во время боя и при необходимости сначала пополнят топливо.';
+        end;
+    end;
+    if not DirectStrategicCall then begin
+      ClearDialogChoices;
+      AddChoice('Вернуться к планете', -11000 - RemoteIndex, RunInjectedAnswer);
+      AddChoice('К списку планет', -10100, RunInjectedAnswer);
+      AddChoice('Назад к правительству', -10099, RunInjectedAnswer);
+    end;
+    Exit;
+  end;
+  Planet := GetPlayer.CurrentPlanet;
+  ScienceLevel := 0;
+  IndustryLevel := 0;
+  if (Planet.ReservedSaveValue >= StrategyOrderMarker) and
+     (Planet.ReservedSaveValue < StrategyOrderMarker + 500000000) then
+  begin
+    StrategyPayload := Planet.ReservedSaveValue - StrategyOrderMarker;
+    StrategyOrderCode := StrategyPayload mod StrategyOrderCodeFactor;
+    StrategySpecialization := (StrategyPayload div StrategyOrderSpecializationFactor) mod 8;
+    StrategyLevel := (StrategyPayload div StrategyOrderLevelFactor) mod 4;
+    if (StrategySpecialization = StrategySpecializationScience) and (StrategyOrderCode = 0) then
+      ScienceLevel := StrategyLevel;
+    if (StrategySpecialization = StrategySpecializationIndustry) and (StrategyOrderCode = 0) then
+      IndustryLevel := StrategyLevel;
+  end;
+  if Answer <= -10000 then
+  begin
+    if Answer = -10000 then
+    begin
+      DialogText := 'Управление планетой.' + #13#10 +
+        Planet.GetFullName(' ') + ' в системе ' + Planet.CurrentStar.Name + '.' + #13#10 +
+        'Бюджет планеты: ' + IntToStr(Planet.Money) + ' cr.' + #13#10 +
+        'Население: ' + IntToStr(Planet.Population) +
+        ', день галактики: ' + IntToStr(Galaxy.CurrentTurn) + '.' + #13#10 +
+        'Технологии: двигатель L' + IntToStr(Planet.InventionLevels[2]) +
+        '; защита L' + IntToStr(Planet.InventionLevels[7]) +
+        '; оружие L' + IntToStr(Planet.InventionLevels[7]) + '.' + #13#10 +
+        'Научная ветка: уровень ' + IntToStr(ScienceLevel) + ' из 3.' + #13#10 +
+        'Промышленная ветка: уровень ' + IntToStr(IndustryLevel) + ' из 3.' + #13#10 +
+        'Производство расходует бюджет самой планеты. Созданное оборудование получает указанный уровень технологии.';
+      ClearDialogChoices;
+      AddChoice('Произвести продовольствие (+100, 400 cr.)', -10001, RunInjectedAnswer);
+      AddChoice('Произвести медикаменты (+100, 800 cr.)', -10002, RunInjectedAnswer);
+      AddChoice('Произвести технику (+100, 1200 cr.)', -10003, RunInjectedAnswer);
+      AddChoice('Произвести оружие (+100, 1600 cr.)', -10004, RunInjectedAnswer);
+      AddChoice('Изготовить двигатель для магазина (5000 cr.)', -10010, RunInjectedAnswer);
+      AddChoice('Изготовить генератор защиты для магазина (6500 cr.)', -10011, RunInjectedAnswer);
+      AddChoice('Изготовить оружие для магазина (8000 cr.)', -10012, RunInjectedAnswer);
+      AddChoice('Исследовать двигатели (+1 уровень, 25000 cr.)', -10015, RunInjectedAnswer);
+      AddChoice('Исследовать защиту и оружие (+1 уровень, 40000 cr.)', -10016, RunInjectedAnswer);
+      AddChoice('Построить гарнизонный корабль...', -10020, RunInjectedAnswer);
+      AddChoice('Назад', -10099, RunInjectedAnswer);
+      Exit;
+    end;
+    Cost := 0;
+    case Answer of
+      -10001: Cost := 400;
+      -10002: Cost := 800;
+      -10003: Cost := 1200;
+      -10004: Cost := 1600;
+      -10010: Cost := 5000;
+      -10011: Cost := 6500;
+      -10012: Cost := 8000;
+      -10015: Cost := 25000;
+      -10016: Cost := 40000;
+      -10021: Cost := 15000;
+      -10022: Cost := 30000;
+    end;
+    if (Answer >= -10012) and (Answer <= -10010) then Cost := Cost - Cost * IndustryLevel div 10;
+    if (Answer >= -10022) and (Answer <= -10021) then Cost := Cost - Cost * IndustryLevel div 10;
+    if (Cost > 0) and (Planet.Money < Cost) then
+    begin
+      DialogText := 'Недостаточно средств в бюджете планеты. Нужно: ' + IntToStr(Cost) +
+        ' cr., доступно: ' + IntToStr(Planet.Money) + ' cr.';
+      ClearDialogChoices;
+      AddChoice('Продолжить управление', -10000, RunInjectedAnswer);
+      AddChoice('Назад к правительству', -10099, RunInjectedAnswer);
+      Exit;
+    end;
+    if Cost > 0 then Dec(Planet.Money, Cost);
+    if (Answer >= -10004) and (Answer <= -10001) then
+    begin
+      case Answer of
+        -10001: ItemType := Ord(t_Food);
+        -10002: ItemType := Ord(t_Medicine);
+        -10003: ItemType := Ord(t_Technics);
+      else ItemType := Ord(t_Arms);
+      end;
+      ProductionAmount := 100 + IndustryLevel * 25;
+      Inc(Planet.Goods[ItemType].Count, ProductionAmount);
+      Planet.GoodsScarcityTicks[ItemType] := 0;
+      Planet.GoodsSurplusTicks[ItemType] := 0;
+      DialogText := 'Производство завершено: на рынок добавлено ' + IntToStr(ProductionAmount) + ' единиц товара.';
+    end
+    else if (Answer >= -10012) and (Answer <= -10010) then
+    begin
+      case Answer of
+        -10010: ItemType := Ord(t_Engine);
+        -10011: ItemType := Ord(t_DefGenerator);
+      else ItemType := Ord(t_Weapon1);
+      end;
+      if Answer = -10010 then TechLevel := Planet.InventionLevels[2]
+      else TechLevel := Planet.InventionLevels[7];
+      Prototype := False;
+      if (ScienceLevel > 0) and (TechLevel < 8) then
+      begin
+        case ScienceLevel of
+          1: Prototype := NextRandomUnitFloat(Planet.RandomState) < 0.08;
+          2: Prototype := NextRandomUnitFloat(Planet.RandomState) < 0.15;
+        else Prototype := NextRandomUnitFloat(Planet.RandomState) < 0.25;
+        end;
+        if Prototype then Inc(TechLevel);
+      end;
+      Owner := Planet.OwnerId;
+      if Answer = -10010 then
+      begin
+        Item := TEngine.Create;
+        TEngine(Item).Init(Round(EngineBaseSize), TechLevel, Owner);
+      end
+      else if Answer = -10011 then
+      begin
+        Item := TDefGenerator.Create;
+        TDefGenerator(Item).Init(Round(DefGeneratorBaseSize), TechLevel, Owner);
+      end
+      else
+      begin
+        Item := Planet.GenerateEquipmentOffer(GetPlayer, ItemType);
+        if Item <> nil then
+          TWeapon(Item).Init(TWeapon(Item).ItemType, TWeapon(Item).Weight, TechLevel, TWeapon(Item).OwnerId);
+      end;
+      if Item = nil then
+      begin
+        Inc(Planet.Money, Cost);
+        DialogText := 'Планета пока не может изготовить этот тип оборудования. Средства возвращены в бюджет.';
+      end
+      else
+      begin
+        Planet.EquipmentShop.Add(Item);
+        if Prototype then
+          DialogText := 'Изготовлен экспериментальный прототип уровня L' + IntToStr(TechLevel) + ' и добавлен в магазин планеты.'
+        else
+          DialogText := 'Оборудование уровня L' + IntToStr(TechLevel) + ' изготовлено и добавлено в магазин планеты.';
+      end;
+    end
+    else if Answer = -10015 then
+    begin
+      if Planet.InventionLevels[2] >= 8 then
+      begin
+        Inc(Planet.Money, Cost);
+        DialogText := 'Технология двигателей уже достигла максимального уровня L8. Средства возвращены.';
+      end
+      else
+      begin
+        Inc(Planet.InventionLevels[2]);
+        DialogText := 'Технология двигателей повышена до L' + IntToStr(Planet.InventionLevels[2]) + '.';
+      end;
+    end
+    else if Answer = -10016 then
+    begin
+      if Planet.InventionLevels[7] >= 8 then
+      begin
+        Inc(Planet.Money, Cost);
+        DialogText := 'Главная технология уже достигла максимального уровня L8. Средства возвращены.';
+      end
+      else
+      begin
+        Inc(Planet.InventionLevels[7]);
+        DialogText := 'Технологии защиты и оружия повышены до L' + IntToStr(Planet.InventionLevels[7]) + '.';
+      end;
+    end
+    else if Answer = -10020 then
+    begin
+      DialogText := 'Конструктор гарнизонного корабля. Оснащение будет создано строго по текущим технологиям планеты.';
+      ClearDialogChoices;
+      AddChoice('Лёгкий перехватчик: двигатель + оружие (15000 cr.)', -10021, RunInjectedAnswer);
+      AddChoice('Защитник: двигатель + щит + оружие (30000 cr.)', -10022, RunInjectedAnswer);
+      AddChoice('Назад', -10000, RunInjectedAnswer);
+      Exit;
+    end
+    else if (Answer = -10021) or (Answer = -10022) then
+    begin
+      Ship := TShip(Planet.BuyWarrior(100));
+      for I := Ship.Inventory.Count - 1 downto 1 do Ship.Inventory.Delete(I);
+      Ship.RebuildEquipmentCache;
+      Ship.CreateAndEquipFuelTanks(Round(FuelTanksBaseSize), 1, Ship.OwnerId);
+      Ship.CreateAndEquipEngine(Round(EngineBaseSize), Planet.InventionLevels[2], Ship.OwnerId);
+      if Answer = -10022 then
+        Ship.CreateAndEquipDefGenerator(Round(DefGeneratorBaseSize), Planet.InventionLevels[7], Ship.OwnerId);
+      Ship.CreateAndEquipWeapon(Ord(t_Weapon1), Round(WeaponInfos[Ord(t_Weapon1)].AverageSize), Planet.InventionLevels[7], Ship.OwnerId);
+      Ship.RefreshDerivedStats(True);
+      if Answer = -10021 then
+        DialogText := 'Построен перехватчик: двигатель L' + IntToStr(Planet.InventionLevels[2]) +
+          ' и оружие L' + IntToStr(Planet.InventionLevels[7]) + '.'
+      else
+        DialogText := 'Построен защитник: двигатель L' + IntToStr(Planet.InventionLevels[2]) +
+          ', щит и оружие L' + IntToStr(Planet.InventionLevels[7]) + '.';
+    end
+    else if Answer = -10099 then
+    begin
+      BuildGovernmentChoices(True);
+      Exit;
+    end;
+    ClearDialogChoices;
+    AddChoice('Продолжить управление', -10000, RunInjectedAnswer);
+    AddChoice('Назад к правительству', -10099, RunInjectedAnswer);
+    Exit;
+  end;
   Injection := PScriptDialogInjection(Answer);
   if Injection.ActionCode <> '' then
   begin

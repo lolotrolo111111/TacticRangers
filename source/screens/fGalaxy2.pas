@@ -640,7 +640,13 @@ procedure TfGalaxy2.MainPanelKeyDown(Sender: TObjectGI; Key: Cardinal);
 begin
   if not IsVirtualKeyDown(VK_CONTROL) and not IsVirtualKeyDown(VK_SHIFT) and not IsVirtualKeyDown(VK_MENU) then
   begin
-    if Key = Ord('M') then CloseClicked(nil)
+    if (Key = Ord('V')) and (ViewMode = 2) and (SelectedJumpStar <> nil) and
+      (SelectedJumpStar <> GetPlayer.CurrentStar) and (GalaxyReturnScreenId = screenStarMap) then
+    begin
+      RemoteViewRequested := SelectedJumpStar;
+      CloseClicked(nil);
+    end
+    else if Key = Ord('M') then CloseClicked(nil)
     else if (Key = VK_RETURN) or (Key = Ord('J')) then
     begin
       if not JumpButton.Disabled then JumpClicked(nil);

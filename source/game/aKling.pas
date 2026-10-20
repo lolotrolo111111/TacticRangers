@@ -152,7 +152,7 @@ implementation
 // @unit-initialization $875894
 // @unit-finalization $5CD964
 
-uses SE_Hole, SysUtils, aAsteroid, aMissile, aScript, Classes, aRanger, aMyFunction, Globals, GlobalsV, EC_Str, Math, EC_Struct, aPlayer, aConst;
+uses SE_Hole, SysUtils, Windows, aAsteroid, aMissile, aScript, Classes, aRanger, aMyFunction, Globals, GlobalsV, EC_Str, Math, EC_Struct, aPlayer, aConst;
 
 { @routine $5C5F44 TKling_Destroy }
 destructor TKling.Destroy;
@@ -531,11 +531,22 @@ begin inherited; end;
 
 { @routine $5C7F0C TKling_NextDay }
 procedure TKling.NextDay;
+var ProfileStart, ProfileStrengthEnd, ProfileInheritedEnd, ProfileEnd: Cardinal;
+  CreatedTime, ExitTime, KernelStart, UserStart, KernelEnd, UserEnd: TFileTime;
+  CpuStart, CpuEnd: Int64;
+  CpuStartValid, CpuEndValid: Boolean;
 begin
+  ProfileStart := GetTickCount;
+  CpuStart := 0;
+  CpuStartValid := GetThreadTimes(GetCurrentThread, CreatedTime, ExitTime, KernelStart, UserStart);
+  if CpuStartValid then
+    CpuStart := PInt64(@KernelStart)^ + PInt64(@UserStart)^;
   try
     if (Integer(Seed) + Galaxy.CurrentTurn) mod 100 = 0 then CalculateStrength;
+    ProfileStrengthEnd := GetTickCount;
     AuraEffectShownThisTurn := False;
     inherited;
+    ProfileInheritedEnd := GetTickCount;
     if (ScriptShip <> nil) and HasScriptControl then begin
       ScriptNextDay;
       if (ScriptShip <> nil) and (KlingType <> ktBoss) then Exit;
@@ -547,6 +558,21 @@ begin
       else NextDayLogic;
     end else if KlingType = ktBertor then MiniBossNextDayLogic else NextDayLogic;
     if (ScriptShip <> nil) and not HasScriptControl then ScriptNextDay;
+    ProfileEnd := GetTickCount;
+    if ProfileEnd - ProfileStart >= 80 then begin
+      CpuEnd := CpuStart;
+      CpuEndValid := GetThreadTimes(GetCurrentThread, CreatedTime, ExitTime, KernelEnd, UserEnd);
+      if CpuEndValid then
+        CpuEnd := PInt64(@KernelEnd)^ + PInt64(@UserEnd)^;
+      AppendLogLineThreadSafe('DOMPROFILE turn=' + IntToStr(Galaxy.CurrentTurn) + ' id=' + IntToStr(Id) +
+        ' type=' + IntToStr(Ord(KlingType)) + ' star=' + IntToStr(CurrentStar.Id) +
+        ' total_ms=' + IntToStr(ProfileEnd - ProfileStart) +
+        ' cpu_ms=' + IntToStr((CpuEnd - CpuStart) div 10000) +
+        ' cpu_valid=' + IntToStr(Ord(CpuStartValid and CpuEndValid)) +
+        ' strength_ms=' + IntToStr(ProfileStrengthEnd - ProfileStart) +
+        ' base_ms=' + IntToStr(ProfileInheritedEnd - ProfileStrengthEnd) +
+        ' ai_ms=' + IntToStr(ProfileEnd - ProfileInheritedEnd));
+    end;
   except
     on E: Exception do begin
       AppendLogLineThreadSafe(E.ClassName + ' ' + E.Message);

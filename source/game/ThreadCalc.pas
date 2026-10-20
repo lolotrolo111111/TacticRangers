@@ -71,8 +71,15 @@ end;
 
 { @routine $72F6A8 WaitForTurnCalculation }
 procedure WaitForTurnCalculation;
+var StartTick, Elapsed: Cardinal;
 begin
-  if TurnCalculationThread.IsRunning then TurnCalculationThread.WaitForIdle(INFINITE);
+  if TurnCalculationThread.IsRunning then begin
+    StartTick := GetTickCount;
+    TurnCalculationThread.WaitForIdle(INFINITE);
+    Elapsed := GetTickCount - StartTick;
+    if Elapsed >= 10 then
+      AppendLogLineThreadSafe('TURNPROFILE wait phase=' + IntToStr(Ord(TurnCalculationPhase)) + ' ms=' + IntToStr(Elapsed));
+  end;
 end;
 { @end $72F6A8 }
 
@@ -80,8 +87,10 @@ end;
 procedure ProcessPlayerStarTurn;
 var RecordFilm: Boolean;
     Stage: Integer;
+    ProfileStart, ProfileStarEnd, ProfileCompleteEnd: Cardinal;
 begin
   Stage := 0;
+  ProfileStart := GetTickCount;
   try
     if not PlayerStarDayPrepared then PrimaryFilm.Clear;
     Stage := 1;
@@ -89,10 +98,17 @@ begin
       ((GetPlayer.Order = soTakeoff) and ((GetPlayer.CurrentPlanet <> nil) or (GetPlayer.DockedTo <> nil))) or
       (GetPlayer.InHyperspace and (Cardinal(GetPlayer.OrderStateData and $FFFF) <= 1));
     PlayerStar.NextDay(RecordFilm);
+    ProfileStarEnd := GetTickCount;
     Stage := 2;
     if Galaxy.StasisModEnabled <> 1 then Galaxy.CompleteDay(RecordFilm);
+    ProfileCompleteEnd := GetTickCount;
     Stage := 3;
     Galaxy.TransferShipsInTransit;
+    AppendLogLineThreadSafe('TURNPROFILE player turn=' + IntToStr(Galaxy.CurrentTurn) +
+      ' star_ms=' + IntToStr(ProfileStarEnd - ProfileStart) +
+      ' complete_ms=' + IntToStr(ProfileCompleteEnd - ProfileStarEnd) +
+      ' transfer_ms=' + IntToStr(GetTickCount - ProfileCompleteEnd) +
+      ' ships=' + IntToStr(PlayerStar.Ships.Count) + ' film=' + IntToStr(Ord(RecordFilm)));
     Stage := 4;
     PlayerStarDayPrepared := False;
   except

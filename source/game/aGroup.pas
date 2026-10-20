@@ -38,11 +38,21 @@ type
     procedure Load(Buffer: TBufEC; Galaxy: TGalaxy); // @addr 0x501960 @note "Ships initially contains serialized IDs, pending reference resolution. Does not clear existing entries."
     procedure NextDay; // @addr 0x501DF4 @note "May remove and free Self when empty or older than 150 days."
     procedure Disband; // @addr 0x501E60 @note "Detaches member ships, removes Self from Galaxy.LiberationGroups, and frees Self."
+    function IsStrategicFleet: Boolean; // @addr $F0000001 @note "Mod-added method."
   end;
+
+const StrategicFleetSeed = Cardinal($F17ECAFE);
 
 implementation
 
 uses SysUtils, Math, aPlanet, aMyFunction, Globals, GlobalsV;
+
+{ @routine $F0000001 TGroup_IsStrategicFleet }
+function TGroup.IsStrategicFleet: Boolean;
+begin
+  Result := (GenerationSeed = StrategicFleetSeed) and (Length(Route) = 4) and (Route[3].Kind = 3);
+end;
+{ @end $F0000001 }
 
 { @routine $501644 TGroup_Create }
 constructor TGroup.Create;
@@ -162,7 +172,7 @@ begin
   if Ships.Count = 0 then begin
     Galaxy.LiberationGroups.Delete(Galaxy.LiberationGroups.IndexOf(Self));
     Free;
-  end else if Galaxy.CurrentTurn > CreatedTurn + 150 then Disband;
+  end else if not IsStrategicFleet and (Galaxy.CurrentTurn > CreatedTurn + 150) then Disband;
 end;
 { @end $501DF4 }
 
@@ -267,6 +277,7 @@ function TGroup.GetShipGreeting(Ship: Pointer): WideString;
 var Star: TStar;
 begin
   Result := '';
+  if IsStrategicFleet then Exit;
   if TShip(Ship).LiberationGroupRouteIndex <> 0 then begin
     Star := Route[3].Target as TStar;
     if Galaxy.CurrentTurn < Route[2].WaitUntilTurn then

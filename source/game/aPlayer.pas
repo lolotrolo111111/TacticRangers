@@ -891,6 +891,8 @@ var
   Item: TObject;
   Entry: PStorageEntry;
 begin
+  // Test mod: retain each preset's random starting balance, but multiply it by ten.
+  InitialMoney := InitialMoney * 10;
   for I := Inventory.Count - 1 downto 0 do
   begin
     Item := TObject(Inventory[I]);

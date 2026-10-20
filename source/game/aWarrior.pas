@@ -47,6 +47,8 @@ type
     destructor Destroy; override; // @addr $5B5FD0 @ida "void __usercall $name(TWarrior *Self@<eax>, __int8 DestroyFlags@<dl>);"
     function FindNearestFriendlyFlagship: TShip; // @addr $5BAA04
     function NavigateToHomePlanet: Boolean; // @addr $5B832C
+    function StrategicFleetOnStation: Boolean; // @addr $F0000002 @note "Mod-added method."
+    function ProcessStrategicFleetRecall: Boolean; // @addr $F0000003 @note "Mod-added method."
     procedure ProcessUnseenProgression; // @addr $5B8974
     procedure MoveToRandomPlanetOrbit; // @addr $5BDC80
     procedure ConsumeNodes(Amount: Integer); // @addr $5BDD30
@@ -82,7 +84,61 @@ const
 
 implementation
 
-uses aKling, aAsteroid, aMissile, aScript, aEFilm, SE_Weapon, SE_Space, aPirate, EC_Struct, Classes, Math, Windows, SysUtils, aRanger, aTranclucator, aRuins, GR_Main, Globals, GlobalsV, EC_Str, aItem, aGalaxy, aShip, aConst, aMyFunction;
+uses aKling, aAsteroid, aMissile, aScript, aEFilm, SE_Weapon, SE_Space, aPirate, EC_Struct, Classes, Math, Windows, SysUtils, aRanger, aTranclucator, aRuins, GR_Main, Globals, GlobalsV, EC_Str, aItem, aGalaxy, aGroup, aShip, aConst, aMyFunction;
+
+{ @routine $F0000002 TWarrior_StrategicFleetOnStation }
+function TWarrior.StrategicFleetOnStation: Boolean;
+begin
+  Result := (LiberationGroup <> nil) and TGroup(LiberationGroup).IsStrategicFleet and
+    not IsOutsideStarSpace and (CurrentStar = TGroup(LiberationGroup).Route[3].Target);
+end;
+{ @end $F0000002 }
+
+{ @routine $F0000003 TWarrior_ProcessStrategicFleetRecall }
+function TWarrior.ProcessStrategicFleetRecall: Boolean;
+var Group: TGroup;
+begin
+  Result := False;
+  if LiberationGroup = nil then Exit;
+  Group := TGroup(LiberationGroup);
+  if not Group.IsStrategicFleet or (Group.Route[2].WaitMode <> 42) then Exit;
+  Result := True;
+  if CurrentPlanet = HomePlanet then begin
+    LeaveLiberationGroup;
+    OrderNone(False);
+    Exit;
+  end;
+  if CurrentPlanet <> nil then begin
+    if CurrentPlanet.IsCoalitionOwned then begin
+      RepairBrokenEquipmentAtLocation;
+      AutoEquipInventory;
+      OptimizeInventory;
+      RefuelAtLocation;
+      ReloadWeaponAmmo;
+      if RepairHullAtLocation then Exit;
+    end;
+    OrderTakeoff;
+    Exit;
+  end;
+  if DockedTo <> nil then begin
+    SynchronizeDockedLocation;
+    RepairBrokenEquipmentAtLocation;
+    AutoEquipInventory;
+    OptimizeInventory;
+    RefuelAtLocation;
+    ReloadWeaponAmmo;
+    if RepairHullAtLocation then Exit;
+    if DockedTo.InNormalSpace then OrderTakeoff;
+    Exit;
+  end;
+  if not InNormalSpace then Exit;
+  AssignWeaponTargetsInStar;
+  if (Order = soLand) or (Order = soJump) then Exit;
+  OrderNone(False);
+  if CurrentStar = HomePlanet.CurrentStar then OrderLanding(HomePlanet, False)
+  else if (GetFuelTanks <> nil) and (GetEngine <> nil) then NavigateToHomePlanet;
+end;
+{ @end $F0000003 }
 
 { @routine $5B5FD0 TWarrior_Destroy }
 destructor TWarrior.Destroy;
@@ -248,6 +304,7 @@ const FriendlyStationMask = [2,3];
 var Planet: TPlanet; Station: TShip; Stage: Integer;
 begin
   Stage := 0;
+  if ProcessStrategicFleetRecall then Exit;
   if WarriorType = wtFlagship then NextDayFlagshipLogic
   else try
     if CurrentPlanet <> nil then begin
@@ -263,7 +320,7 @@ begin
         TrainSkillsAutomatically;
         if RepairHullAtLocation then Exit;
         Stage := 3;
-        if LiberationGroup <> nil then ProcessLiberationGroupRoute;
+        if (LiberationGroup <> nil) and not StrategicFleetOnStation then ProcessLiberationGroupRoute;
         if (CurrentPlanet <> HomePlanet) or (LiberationGroup <> nil) or IsHomePatrolTurn then OrderTakeoff;
       end else OrderTakeoff;
       Stage := 4;
@@ -286,7 +343,7 @@ begin
         BuyEquipmentAtLocation(False);
         RestoreEssentialEquipment;
         Stage := 6;
-        if LiberationGroup <> nil then ProcessLiberationGroupRoute;
+        if (LiberationGroup <> nil) and not StrategicFleetOnStation then ProcessLiberationGroupRoute;
         if (DockedTo.TypeId = Byte(rstMilitaryBase)) and (TRuins(DockedTo).FlyToStar <> nil) and (TRuins(DockedTo).FlyToStar <> DockedTo.CurrentStar) then Exit;
         if DockedTo.InNormalSpace then OrderTakeoff;
         Stage := 7;
@@ -326,18 +383,19 @@ begin
         Stage := 16;
       end else begin
         Stage := 17;
-        if LiberationGroup = nil then begin
+        if (LiberationGroup = nil) or StrategicFleetOnStation then begin
           Stage := 18;
           SelectEnemyShipInStar;
           EngageEnemyShip;
           Stage := 19;
           if Order = soNone then
-            if IsHomePatrolTurn then MoveToRandomPlanetOrbit
+            if StrategicFleetOnStation then MoveToRandomPatrolPoint
+            else if IsHomePatrolTurn then MoveToRandomPlanetOrbit
             else if not NavigateToHomePlanet then MoveToRandomPatrolPoint;
           Stage := 20;
         end;
       end;
-      if LiberationGroup <> nil then begin
+      if (LiberationGroup <> nil) and not StrategicFleetOnStation then begin
         Stage := 21;
         AfterburnerActive := False;
         RefreshDerivedStats(True);
@@ -449,7 +507,7 @@ begin
         TrainSkillsAutomatically;
         if RepairHullAtLocation then Exit;
         Stage := 3;
-        if LiberationGroup <> nil then ProcessLiberationGroupRoute;
+        if (LiberationGroup <> nil) and not StrategicFleetOnStation then ProcessLiberationGroupRoute;
         if (CurrentPlanet <> HomePlanet) or (LiberationGroup <> nil) or IsHomePatrolTurn then OrderTakeoff;
       end else OrderTakeoff;
       Stage := 4;
@@ -469,7 +527,7 @@ begin
         BuyEquipmentAtLocation(False);
         RestoreEssentialEquipment;
         Stage := 6;
-        if LiberationGroup <> nil then ProcessLiberationGroupRoute;
+        if (LiberationGroup <> nil) and not StrategicFleetOnStation then ProcessLiberationGroupRoute;
         if Galaxy.FindMilitaryBaseInTransit = DockedTo then Exit;
         if DockedTo.InNormalSpace then OrderTakeoff;
         Stage := 7;
@@ -511,7 +569,7 @@ begin
         Stage := 16;
       end else begin
         Stage := 17;
-        if LiberationGroup = nil then begin
+        if (LiberationGroup = nil) or StrategicFleetOnStation then begin
           Stage := 18;
           SelectEnemyShipInStar;
           ManeuverFlagship;
@@ -532,12 +590,12 @@ begin
             end;
             if Order = soNone then TryCollectBestFloatingItem(50);
             if (Order = soNone) and IsHomePatrolTurn then MoveToRandomPlanetOrbit;
-            if (Order = soNone) and not NavigateToHomePlanet then MoveToRandomPatrolPoint;
+            if (Order = soNone) and (StrategicFleetOnStation or not NavigateToHomePlanet) then MoveToRandomPatrolPoint;
           end;
           Stage := 20;
         end;
       end;
-      if LiberationGroup <> nil then begin
+      if (LiberationGroup <> nil) and not StrategicFleetOnStation then begin
         Stage := 21;
         AfterburnerActive := False;
         RefreshDerivedStats(True);
@@ -871,7 +929,7 @@ begin
         Stage := 33;
         if TruceShip <> Ship then begin
           Stage := 34;
-          if LiberationGroup = nil then begin
+          if (LiberationGroup = nil) or StrategicFleetOnStation then begin
             Stage := 35;
             for J := 1 to WeaponCount do begin
               Stage := 36;
@@ -1009,7 +1067,7 @@ begin
   Stage := 2;
   for I := 0 to CurrentStar.Ships.Count - 1 do begin
     Ship := CurrentStar.Ships[I];
-    if Ship.InNormalSpace and (EnemyShip <> Ship) and (TruceShip <> Ship) and (LiberationGroup = nil) and
+    if Ship.InNormalSpace and (EnemyShip <> Ship) and (TruceShip <> Ship) and ((LiberationGroup = nil) or StrategicFleetOnStation) and
       (GetRelationLevelToShip(Ship) <= rlHostile) then ScoreTarget(Ship);
   end;
   if Assigned = WeaponCount then Exit;
@@ -1154,7 +1212,7 @@ begin
           if Ship.CurrentStanding in [ssDominator, ssPirateMilitary] then begin
             EnemyShip := Ship;
             if ChanceToWin(Ship) > 1 then Exit;
-          end else if (LiberationGroup = nil) or ((GetPlayer = Ship) and (Ship.CurrentStanding = ssPirateActive)) then begin
+          end else if (LiberationGroup = nil) or StrategicFleetOnStation or ((GetPlayer = Ship) and (Ship.CurrentStanding = ssPirateActive)) then begin
             Chance := ChanceToWin(Ship);
             TravelTime := PointDistance(Position, Ship.Position) / (Speed + 1) + 0.1;
             if Chance / TravelTime > BestChance / BestDistance then begin

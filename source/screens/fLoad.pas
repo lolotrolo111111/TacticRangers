@@ -15,7 +15,7 @@ type
     procedure SetPendingLoads(Loads: TList; StartImmediately: Boolean); // @addr 0x604504 @note "Takes ownership; waits for the previous run before replacing the list."
   end;
 
-  TfLoad = class(TMessageLoopGI) // @size 0x108
+  TfLoad = class(TMessageLoopGI) // @size 0x114
   public
     ProgressTimer: PCallbackTimerGI; // @offset 0xD0
     LoadProgress: Single; // @offset 0xD4
@@ -31,6 +31,9 @@ type
     IntroImageKind: Integer; // @offset $FC  0 video, 1 GAI.
     LoadPanel: TfPanelLoad; // @offset 0x100
     BackgroundStyle: Integer; // @offset $104
+    ProfileStarted: Cardinal; // @offset $108
+    ProfileQueueMs: Cardinal; // @offset $10C
+    ProfileLoadMode: Integer; // @offset $110
 
     constructor Create; // @addr 0x604568 @ida "TfLoad *__usercall $name@<eax>(void *SelfOrClass@<eax>, unsigned __int8 Allocate@<dl>);"
     destructor Destroy; override; // @addr 0x6045C0 @ida "void __usercall $name(TfLoad *Self@<eax>, __int8 DestroyFlags@<dl>);"
@@ -285,6 +288,8 @@ end;
 procedure TfLoad.OnOpen;
 var Loads: TList;
 begin
+  ProfileStarted := GetTickCount;
+  ProfileLoadMode := ScreenLoadMode;
   IntroSkipRequest := 0;
   LoadPanel.OnOpen;
   ContentPanel.KeyDownCallback := IntroKeyDown;
@@ -306,6 +311,7 @@ begin
     QueueCommonLoadingAssets(Loads, RootUiObject);
     QueueSpaceLoadingAssets(Loads, RootUiObject);
   end;
+  ProfileQueueMs := GetTickCount - ProfileStarted;
   if Loads.Count > 0 then
   begin
     CacheLoader.SetPendingLoads(Loads, False);
@@ -341,6 +347,9 @@ begin
   with GetByName('Film') as TxvidGI do ImageClose;
   LoadPanel.OnClose;
   if CacheLoader.IsRunning then CacheLoader.WaitForIdle(INFINITE);
+  AppendLogLineThreadSafe('TURNPROFILE loading mode=' + IntToStr(ProfileLoadMode) +
+    ' total_ms=' + IntToStr(GetTickCount - ProfileStarted) +
+    ' queue_ms=' + IntToStr(ProfileQueueMs) + ' assets=' + IntToStr(CacheLoader.TotalLoadCount));
   if ProgressTimer <> nil then
   begin
     CancelCallbackTimer(ProgressTimer);
@@ -412,7 +421,8 @@ begin
   end;
   if DisplayedProgress < LoadProgress then
   begin
-    DisplayedProgress := Min(0.05 + DisplayedProgress, LoadProgress);
+    if LoadingFinished and (ScreenLoadMode = 2) then DisplayedProgress := LoadProgress
+    else DisplayedProgress := Min(0.05 + DisplayedProgress, LoadProgress);
     LoadPanel.SetProgress(DisplayedProgress);
   end;
   if not LoadingFinished then Exit;

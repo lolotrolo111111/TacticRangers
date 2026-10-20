@@ -10916,8 +10916,9 @@ end;
 { @routine $7211C4 TShip_RepelFollowingShips }
 procedure TShip.RepelFollowingShips;
 var
-  I, Count: Integer;
+  I, Count, RandomFactor: Integer;
   Other: TShip;
+  HaveSelfWeight: Boolean;
   Distance, Overlap, VectorLength, Angle, DeltaY, DeltaX, OffsetY, OffsetX,
     SelfWeight, OtherWeight, Fraction: Single;
 begin
@@ -10925,7 +10926,7 @@ begin
     Count := CurrentStar.Ships.Count;
     OffsetX := 0;
     OffsetY := 0;
-    SelfWeight := Max(0.01, CalculateSpeed / Max(0.01, PointDistance(RepulsionPosition, Position)));
+    HaveSelfWeight := False;
     repeat
       I := 0;
       while I < Count do
@@ -10936,12 +10937,18 @@ begin
           Inc(I);
           Continue;
         end;
-        OtherWeight := Max(0.01, Other.CalculateSpeed / Max(0.01, PointDistance(Other.RepulsionPosition, Other.Position)));
-        Fraction := SeededRandomIntRange(95, 105, Cardinal(Galaxy.CurrentTurn) * (Other.Seed + Seed)) * (SelfWeight / (SelfWeight + OtherWeight)) * 0.01;
+        // Keep the random draw for every candidate, including chaotic-random games.
+        RandomFactor := SeededRandomIntRange(95, 105, Cardinal(Galaxy.CurrentTurn) * (Other.Seed + Seed));
         Distance := PointDistance(RepulsionPosition, Other.RepulsionPosition);
         Overlap := Distance - CollisionRadius - Other.CollisionRadius - 5;
         if Overlap < -0.01 then
         begin
+          if not HaveSelfWeight then begin
+            SelfWeight := Max(0.01, CalculateSpeed / Max(0.01, PointDistance(RepulsionPosition, Position)));
+            HaveSelfWeight := True;
+          end;
+          OtherWeight := Max(0.01, Other.CalculateSpeed / Max(0.01, PointDistance(Other.RepulsionPosition, Other.Position)));
+          Fraction := RandomFactor * (SelfWeight / (SelfWeight + OtherWeight)) * 0.01;
           Overlap := -Overlap;
           if Distance <= 1 then
           begin

@@ -547,7 +547,7 @@ begin
   ScriptUiRequestEvent := CreateEvent(nil, True, False, nil);
   ScriptUiAbortEvent := CreateEvent(nil, True, False, nil);
   TurnCalculationThread := TThreadCalc.Create;
-  TurnCalculationThread.SetPriority(2);
+  TurnCalculationThread.SetPriority(3);
   ScriptTemplates := TList.Create;
   GlobalScriptVariables := TVarArrayEC.Create;
   SharedScriptVariables := TVarArrayEC.Create;

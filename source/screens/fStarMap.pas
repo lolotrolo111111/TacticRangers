@@ -146,6 +146,9 @@ type
     function GetMapCenter: TPoint; // @addr 0x7A5E1C @ida "void __usercall $name(TfStarMap *Self@<eax>, TPoint *Result@<edx>);"
     procedure SetMapCenterManually(Point: TPoint); // @addr 0x7A5E88 @ida "void __usercall $name(TfStarMap *Self@<eax>, TPoint *Point@<edx>);" @note "Disables automatic film-camera following."
     procedure SetMapCenter(Center: TPoint); // @addr 0x7A5F24 @ida "void __usercall $name(TfStarMap *Self@<eax>, TPoint *Center@<edx>);"
+    procedure BeginRemoteView(Star: TStar); // @addr $F0000020 @note "Mod-added camera."
+    procedure EndRemoteView; // @addr $F0000021 @note "Mod-added camera."
+    procedure RemoteViewClick(Sender: TObjectGI; KeyState: Cardinal; Point: TPoint); // @addr $F0000022 @ida "void __userpurge $name(TfStarMap *Self@<eax>, TObjectGI *Sender@<edx>, unsigned int KeyState@<ecx>, TPoint *Point@<^0>);" @note "Mod-added camera."
     procedure CenterMapForTalk(Position: TPointF); // @addr 0x7A5FB8 @ida "void __usercall $name(TfStarMap *Self@<eax>, TPointF *Position@<edx>);"
     procedure RestorePendingSceneObjects; // @addr 0x7A8AE8
     procedure BuildSpaceBackground(StarField: TStarFieldGI; SpaceImage: TSpaceImgGI; Seed: Cardinal; BackgroundIndex: Integer); // @addr 0x7A8CA4
@@ -238,13 +241,104 @@ type
 function GetTurnFilmFrameInterval(Activity: Integer): Integer; // @addr 0x7BE69C @note "Returns milliseconds, adjusted by the configured film speed."
 
 var
+  RemoteViewRequested: TStar = nil; // @addr $F0000023 @note "Mod-added camera request."
   PanelSlideCurve: array[0..15] of Single = (0, 0.033, 0.112, 0.269, 0.456, 0.675, 0.882, 1.023, 1.09, 1.127, 1.129, 1.111, 1.064, 1.036, 1.011, 1); // @addr $87C214
   FilmCameraLookAheadSteps: Integer = 30; // @addr $87C254
 
 implementation
 
 uses Globals, GlobalsV, SE_Process, GR_Main, ThreadCalc, aCalc, aPlayer, EC_Str,
-  GI_GAI, aEFilmEnd, aMyFunction, fLoad, fFilmFile, Windows, Messages, GI_MultiImage, aGalaxyStruct, aScript, fShip2, SysUtils, GR_DX, GR_Rect, SE_Hole, aKling, GR_Gi, aRanger, fGalaxy2, fSaveManager, GI_MessageBox, aConst, aPlanet, aRuins, Robot, aSaveLoad, fLoadRobot, GI_StarFieldImg, Math, Achievements, EC_Mem, aMissile, SE_Missile, SE_Ship2, SE_Container, SE_Ruins, SE_Asteroid, SE_Planet, SE_Star, aEObjInfo, aPirate, aPath, fTalk, fGoodsShop2, aTranclucator, ab_MainForm;
+  GI_GAI, aEFilmEnd, aMyFunction, fLoad, fFilmFile, Windows, Messages, GI_MultiImage, aGalaxyStruct, aScript, fShip2, SysUtils, GR_DX, GR_Rect, SE_Hole, aKling, GR_Gi, aRanger, fGalaxy2, fSaveManager, GI_MessageBox, aConst, aPlanet, aRuins, Robot, aSaveLoad, fLoadRobot, GI_StarFieldImg, Math, Achievements, EC_Mem, aMissile, SE_Missile, SE_Ship2, SE_Container, SE_Ruins, SE_Asteroid, SE_Planet, SE_Star, aEObjInfo, aPirate, aPath, fTalk, fGoodsShop2, aTranclucator, ab_MainForm, fGov;
+
+var
+  RemoteViewStar: TStar = nil;
+  RemoteViewSavedCenter: TPoint;
+
+{ @routine $F0000020 TfStarMap_BeginRemoteView }
+procedure TfStarMap.BeginRemoteView(Star: TStar);
+var BackgroundPath: WideString;
+begin
+  if (Star = nil) or (Mode <> smmOrders) or (Star = PlayerStar) then Exit;
+  RemoteViewSavedCenter := GetMapCenter;
+  StopOrderMode;
+  SpaceProcess.CloseSpace;
+  RemoteViewStar := Star;
+  Star.OpenSpaceScene(MapControls, GetByName('MapPanel'), Self);
+  Star.RefreshSpaceObjectPositions;
+  SpaceProcess.RadarRange := 0;
+  SpaceProcess.ActionRange := 0;
+  SetMapCenter(Classes.Point(0, 0));
+  if Star.BackgroundImage < 10 then BackgroundPath := 'Bm.BGO.bg0' + IntToStr(Star.BackgroundImage)
+  else BackgroundPath := 'Bm.BGO.bg' + IntToStr(Star.BackgroundImage);
+  StarField.SetBackgroundImage(BackgroundPath);
+  GetByName('PanelSpace').SetActive(False);
+  WeaponPanel.SetActive(False);
+  MapControls.LeftButtonDownCallback := RemoteViewClick;
+  MapControls.LeftButtonDoubleClickCallback := nil;
+  MapControls.RightButtonDownCallback := nil;
+  MapControls.MouseMoveCallback := nil;
+  SpaceEffectsTimer := ScheduleCallbackTimer(18, 18, AdvanceSpaceEffects);
+  FullFrameRedrawRequested := True;
+  ShowLargeHelp(Star.Name + '  |  ESC: return  |  arrows: camera');
+end;
+{ @end $F0000020 }
+
+{ @routine $F0000021 TfStarMap_EndRemoteView }
+procedure TfStarMap.EndRemoteView;
+var BackgroundPath: WideString;
+begin
+  if RemoteViewStar = nil then Exit;
+  if SpaceEffectsTimer <> nil then
+  begin
+    CancelCallbackTimer(SpaceEffectsTimer);
+    SpaceEffectsTimer := nil;
+  end;
+  MapControls.LeftButtonDownCallback := nil;
+  SpaceProcess.CloseSpace;
+  RemoteViewStar := nil;
+  PlayerStar.OpenSpaceScene(MapControls, GetByName('MapPanel'), Self);
+  PlayerStar.RefreshSpaceObjectPositions;
+  if PlayerStar.BackgroundImage < 10 then BackgroundPath := 'Bm.BGO.bg0' + IntToStr(PlayerStar.BackgroundImage)
+  else BackgroundPath := 'Bm.BGO.bg' + IntToStr(PlayerStar.BackgroundImage);
+  StarField.SetBackgroundImage(BackgroundPath);
+  SetMapCenter(RemoteViewSavedCenter);
+  StartOrderMode;
+  GetByName('PanelSpace').SetActive(True);
+  FullFrameRedrawRequested := True;
+  HideLargeHelp;
+end;
+{ @end $F0000021 }
+
+{ @routine $F0000022 TfStarMap_RemoteViewClick }
+procedure TfStarMap.RemoteViewClick(Sender: TObjectGI; KeyState: Cardinal; Point: TPoint);
+var I: Integer; Ship: TShip; Planet: TPlanet;
+begin
+  if RemoteViewStar = nil then Exit;
+  for I := 0 to RemoteViewStar.Ships.Count - 1 do
+  begin
+    Ship := TShip(RemoteViewStar.Ships[I]);
+    if Ship.InNormalSpace and (Ship.Graphic <> nil) and Ship.Graphic.HitTestCursor then
+    begin
+      ShowLargeHelp(Ship.GetFullName(' ') + '  |  ESC: return');
+      Exit;
+    end;
+  end;
+  for I := 0 to RemoteViewStar.Planets.Count - 1 do
+  begin
+    Planet := TPlanet(RemoteViewStar.Planets[I]);
+    if (Planet.Graphic <> nil) and Planet.Graphic.HitTestCursor then
+    begin
+      if Planet.IsCoalitionOwned then
+      begin
+        OpenStrategicPlanet(Self, Planet);
+        FullFrameRedrawRequested := True;
+      end
+      else ShowLargeHelp(Planet.GetFullName(' ') + '  |  ESC: return');
+      Exit;
+    end;
+  end;
+end;
+{ @end $F0000022 }
 
 { @routine $7A5CA0 TfStarMap_Create }
 constructor TfStarMap.Create;
@@ -488,7 +582,9 @@ var
   MapIndex: Integer;
   StartText, WinText, LossText, TerronName: WideString;
   BattleFailed: Boolean;
+  ProfileStart, ProfileSceneStart, ProfileSceneEnd: Cardinal;
 begin
+  ProfileStart := GetTickCount;
   if (GetPlayer <> nil) and (Byte(GetPlayer.RuinsMode) > 0) then GetPlayer.ExitRuinsMode;
   if DispatchPendingScriptRequests then Exit;
   EvictMainMenuShipCachesWhenAddressSpaceHigh;
@@ -664,7 +760,9 @@ begin
     UpdateRectsEnabled := True;
     MapControls.Invalidate;
     UpdateRectsEnabled := False;
+    ProfileSceneStart := GetTickCount;
     PlayerStar.OpenSpaceScene(MapControls, GetByName('MapPanel'), Self);
+    ProfileSceneEnd := GetTickCount;
     if ResumeMode <> smrTurnFilm then PlayerStar.RefreshSpaceObjectPositions;
     BuildSpaceBackground(GetByName('StarField') as TStarFieldGI, GetByName('SpaceImg') as TSpaceImgGI,
       PlayerStar.GenerationSeed, PlayerStar.BackgroundImage);
@@ -732,6 +830,14 @@ begin
         EndTurnClicked(nil);
       end;
     end;
+    AppendLogLineThreadSafe('TURNPROFILE open_space total_ms=' + IntToStr(GetTickCount - ProfileStart) +
+      ' scene_ms=' + IntToStr(ProfileSceneEnd - ProfileSceneStart) +
+      ' ships=' + IntToStr(PlayerStar.Ships.Count));
+    if RemoteViewRequested <> nil then
+    begin
+      BeginRemoteView(RemoteViewRequested);
+      RemoteViewRequested := nil;
+    end;
   end;
 end;
 { @end $7A7778 }
@@ -743,6 +849,7 @@ var
 begin
   Stage := 0;
   try
+    if RemoteViewStar <> nil then EndRemoteView;
     if (Galaxy <> nil) and (Mode = smmOrders) then Galaxy.CheckIntegrityChecksum(2);
     Stage := 1;
     if DeferredEndTurnTimer <> nil then
@@ -1080,6 +1187,15 @@ end;
 { @routine $7A9DCC TfStarMap_MapKeyDown }
 procedure TfStarMap.MapKeyDown(Sender: TObjectGI; Key: Cardinal);
 begin
+  if RemoteViewStar <> nil then
+  begin
+    if Key = VK_ESCAPE then EndRemoteView
+    else if Key = VK_LEFT then ScrollLeftHeld := True
+    else if Key = VK_RIGHT then ScrollRightHeld := True
+    else if Key = VK_UP then ScrollUpHeld := True
+    else if Key = VK_DOWN then ScrollDownHeld := True;
+    Exit;
+  end;
   if MainPanel.NavigationLocked or ShipScreen.FlagD4 then Exit;
   if IsVirtualKeyDown(VK_CONTROL) and (Key = VK_ADD) then
   begin
@@ -1200,6 +1316,14 @@ end;
 { @routine $7AA348 TfStarMap_MapKeyUp }
 procedure TfStarMap.MapKeyUp(Sender: TObjectGI; Key: Cardinal);
 begin
+  if RemoteViewStar <> nil then
+  begin
+    if Key = VK_LEFT then ScrollLeftHeld := False
+    else if Key = VK_RIGHT then ScrollRightHeld := False
+    else if Key = VK_UP then ScrollUpHeld := False
+    else if Key = VK_DOWN then ScrollDownHeld := False;
+    Exit;
+  end;
   if Mode = smmOrders then DisplayedObject := nil;
   if Key = VK_LEFT then
   begin

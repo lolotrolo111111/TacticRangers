@@ -2304,8 +2304,14 @@ var I, J: Integer;
   PreviousTechLevel: Integer;
   Text: WideString;
   Stage: Integer;
+  ProfileStart, ProfileStarStart, ProfileStarMs, ProfileStarsMs, ProfileSlowestMs: Cardinal;
+  ProfileSlowestName: WideString;
+  ProfileSlowestShips, ProfileStarCount: Integer;
 begin
   Stage := 0;
+  ProfileStart := GetTickCount;
+  ProfileStarsMs := 0; ProfileSlowestMs := 0; ProfileSlowestName := '';
+  ProfileSlowestShips := 0; ProfileStarCount := 0;
   if GetPlayer <> nil then
     try
       Ratio := GetCoalitionToPirateSystemRatio / GalaxyDifficultyTuning[DifficultyLevels[0]].DifficultyFactor34;
@@ -2336,7 +2342,18 @@ begin
       else WingmenPendingLeadershipPenalty.Clear;
       for I := 0 to Stars.Count - 1 do begin
         Star := TStar(Stars[I]);
-        if (GetPlayer = nil) or (GetPlayer.CurrentStar <> Star) then Star.NextDay(False);
+        if (GetPlayer = nil) or (GetPlayer.CurrentStar <> Star) then begin
+          ProfileStarStart := GetTickCount;
+          Star.NextDay(False);
+          ProfileStarMs := GetTickCount - ProfileStarStart;
+          Inc(ProfileStarsMs, ProfileStarMs);
+          Inc(ProfileStarCount);
+          if ProfileStarMs > ProfileSlowestMs then begin
+            ProfileSlowestMs := ProfileStarMs;
+            ProfileSlowestName := Star.Name;
+            ProfileSlowestShips := Star.Ships.Count;
+          end;
+        end;
       end;
       if (GetPlayer = nil) or (GetPlayer.GetHull.HullPoints <= 0) then Exit;
       Stage := 2;
@@ -2400,6 +2417,10 @@ begin
       Stage := 24; RefreshRangerRatingPlaces;
       Stage := 25; PrunePlanetNews;
       Stage := 26; CheckMemoryUsage;
+      AppendLogLineThreadSafe(AnsiString('TURNPROFILE galaxy turn=' + IntToStr(CurrentTurn) +
+        ' total_ms=' + IntToStr(GetTickCount - ProfileStart) + ' stars_ms=' + IntToStr(ProfileStarsMs) +
+        ' stars=' + IntToStr(ProfileStarCount) + ' slowest_ms=' + IntToStr(ProfileSlowestMs) +
+        ' slowest_ships=' + IntToStr(ProfileSlowestShips) + ' slowest_star=' + ProfileSlowestName));
     except
       on E: Exception do begin
         AppendLogLineThreadSafe(E.ClassName + ' ' + E.Message);
@@ -11333,6 +11354,11 @@ var
   HitFlags: array[0..3] of ShortInt;
   Reserved357: Byte;
   Stage: Integer;
+  ProfileTicks: array[0..8] of Cardinal;
+  ProfileCombatCount, ProfileInitialShips: Integer;
+  ProfileShipStart, ProfileShipElapsed, ProfileShipTotal, ProfileShipMax: Cardinal;
+  ProfileShipId, ProfileShipType: Integer;
+  HasFollowingShips: Boolean;
 // @nested $8630B0 CompleteItemPickup
 procedure CompleteItemPickup; // @addr 0x8630B0 @ida "void __cdecl $name(void *ParentFrame);" @note "Caller-popped static link; item -4, ship -8, star -12, film flag -13. Transfers, merges or consumes the completed pickup; may free the item."
 var Series: TDominatorSeries; ResearchCount, Index, PickupResult: Integer;
@@ -11468,6 +11494,10 @@ begin
 end;
 begin
   Stage := 0;
+  ProfileTicks[0] := GetTickCount;
+  ProfileInitialShips := Self.Ships.Count;
+  ProfileCombatCount := 0;
+  ProfileShipTotal := 0; ProfileShipMax := 0; ProfileShipId := 0; ProfileShipType := 0;
   try
     Self.RefreshMovementStepParameters;
     if (GetPlayer <> nil) and (GetPlayer.CurrentStar = Self) then
@@ -11517,8 +11547,16 @@ begin
       for Index := (Self.Ships.Count - 1) downto 0 do
       begin
         Ship := Self.Ships[Index];
+        ProfileShipStart := GetTickCount;
         if (Galaxy.StasisModEnabled <> 1) or (GetPlayer = Ship) then
           Ship.NextDay;
+        ProfileShipElapsed := GetTickCount - ProfileShipStart;
+        Inc(ProfileShipTotal, ProfileShipElapsed);
+        if ProfileShipElapsed > ProfileShipMax then begin
+          ProfileShipMax := ProfileShipElapsed;
+          ProfileShipId := Ship.Id;
+          ProfileShipType := Ship.TypeId;
+        end;
         if (Ship.PartnerShip <> nil)
           and ((Ship.PartnershipDaysRemaining > 0)
           and (WingmenPendingLeadershipPenalty.IndexOf(Ship) < 0)) then
@@ -11590,6 +11628,7 @@ begin
       Galaxy.KellerMissionState := 5;
     end;
 
+    ProfileTicks[1] := GetTickCount;
     Stage := 8;
     Count := Self.Ships.Count;
     for Index := 0 to (Count - 1) do
@@ -11722,6 +11761,8 @@ begin
       end;
     end;
 
+    ProfileTicks[2] := GetTickCount;
+    ProfileCombatCount := Self.CombatEvents.Count;
     Stage := 10;
     Count := Self.Ships.Count;
     for Index := 0 to (Count - 1) do
@@ -11750,7 +11791,13 @@ begin
     Count := Self.MovementStepCount;
     Self.SimulationStepCount := Cardinal(Count);
     EntryCount := Self.Ships.Count;
-    for PathStep := 0 to (Count - 1) do
+    HasFollowingShips := False;
+    for EntryIndex := 0 to EntryCount - 1 do
+      if TShip(Self.Ships[EntryIndex]).Order = soFollowShip then begin
+        HasFollowingShips := True;
+        Break;
+      end;
+    if HasFollowingShips then for PathStep := 0 to (Count - 1) do
     begin
       for EntryIndex := 0 to (EntryCount - 1) do
       begin
@@ -11856,6 +11903,7 @@ begin
 
     Stage := 12;
 
+    ProfileTicks[3] := GetTickCount;
     Stage := 13;
     if RecordFilm then
     begin
@@ -11987,10 +12035,12 @@ begin
       end;
     end;
 
+    ProfileTicks[4] := GetTickCount;
     Stage := 16;
     if PlayerStar = Self then
       Self.AvoidShipPathCollisions;
 
+    ProfileTicks[5] := GetTickCount;
     Stage := 17;
     if RecordFilm then
     begin
@@ -12173,6 +12223,7 @@ begin
       end;
     end;
 
+    ProfileTicks[6] := GetTickCount;
     Stage := 29;
     Self.PlayerCombatOccurred := False;
     for PathStep := 0 to (Count - 1) do
@@ -13515,6 +13566,7 @@ begin
       Self.ReferencedItems.Clear;
     end;
 
+    ProfileTicks[7] := GetTickCount;
     Stage := 29999;
     Self.ProcessItemScripts(11);
     EntryIndex := 0;
@@ -14003,6 +14055,22 @@ begin
     if (GetPlayer <> nil) and (GetPlayer.CurrentStar = Self) then
       GetPlayer.AchievementStats.CheckBomberAchievement(GetPlayer.BombKillsThisTurn);
     aShip.SimulationContext := 0;
+    ProfileTicks[8] := GetTickCount;
+    if (ProfileTicks[8] - ProfileTicks[0] >= 100) then
+      AppendLogLineThreadSafe('TURNDETAIL turn=' + IntToStr(Galaxy.CurrentTurn) +
+        ' star_id=' + IntToStr(Self.Id) + ' film=' + IntToStr(Ord(RecordFilm)) +
+        ' ships=' + IntToStr(ProfileInitialShips) + ' events=' + IntToStr(ProfileCombatCount) +
+        ' ship_total_ms=' + IntToStr(ProfileShipTotal) + ' ship_max_ms=' + IntToStr(ProfileShipMax) +
+        ' slow_ship_id=' + IntToStr(ProfileShipId) + ' slow_ship_type=' + IntToStr(ProfileShipType) +
+        ' steps=' + IntToStr(Self.SimulationStepCount) +
+        ' prep_ms=' + IntToStr(ProfileTicks[1] - ProfileTicks[0]) +
+        ' attacks_ms=' + IntToStr(ProfileTicks[2] - ProfileTicks[1]) +
+        ' paths_ms=' + IntToStr(ProfileTicks[3] - ProfileTicks[2]) +
+        ' follow_ms=' + IntToStr(ProfileTicks[4] - ProfileTicks[3]) +
+        ' collision_ms=' + IntToStr(ProfileTicks[5] - ProfileTicks[4]) +
+        ' setup_ms=' + IntToStr(ProfileTicks[6] - ProfileTicks[5]) +
+        ' simulation_ms=' + IntToStr(ProfileTicks[7] - ProfileTicks[6]) +
+        ' finish_ms=' + IntToStr(ProfileTicks[8] - ProfileTicks[7]));
   except
     on E: Exception do
     begin
