@@ -396,6 +396,18 @@ var
     Result := Round(RemapClamped(ControlPercent, MinimumControl, MaximumControl,
       DominatorGenerationTuning[Tier, MaximumColumn], DominatorGenerationTuning[Tier, MinimumColumn]));
   end;
+  // The level cap only affects equipment rank. Population control, ship count,
+  // weapon selection and other invasion rules keep their ordinary calculations.
+  function ClampStrategicEquipmentLevel(Value: Integer): Integer;
+  var LevelCap: Integer;
+  begin
+    if not Galaxy.IsStrategic500Campaign then begin
+      Result := Value;
+      Exit;
+    end;
+    LevelCap := Min(8, Galaxy.GetStrategicDominatorLevel div 8 + 1);
+    Result := Min(Value, LevelCap);
+  end;
 
 begin
   InitializeDominator(Kind, Planet, Series);
@@ -428,17 +440,17 @@ begin
   ChameleonActive := False;
   GraphDominator := Galaxy.GraphDominatorSurfacesEnabled;
   CreateAndEquipHull(Round(RandomInteger(DominatorShipDefinitions[Ord(KlingType)].MinimumHullSize,
-    DominatorShipDefinitions[Ord(KlingType)].MaximumHullSize) * HullCapacityScale), RandomTuning(2, 3), Ord(oiDominator), -1, False);
-  CreateAndEquipEngine(SizeForKind(EngineBaseSize), RandomTuning(10, 11), Ord(oiDominator));
+    DominatorShipDefinitions[Ord(KlingType)].MaximumHullSize) * HullCapacityScale), ClampStrategicEquipmentLevel(RandomTuning(2, 3)), Ord(oiDominator), -1, False);
+  CreateAndEquipEngine(SizeForKind(EngineBaseSize), ClampStrategicEquipmentLevel(RandomTuning(10, 11)), Ord(oiDominator));
   if RandomInteger(1, 100) <= InterpolatedTuning(14, 15) then
-    CreateAndEquipRepairRobot(SizeForKind(RepairRobotBaseSize), RandomTuning(4, 5), Ord(oiDominator));
+    CreateAndEquipRepairRobot(SizeForKind(RepairRobotBaseSize), ClampStrategicEquipmentLevel(RandomTuning(4, 5)), Ord(oiDominator));
   if RandomInteger(1, 100) <= InterpolatedTuning(16, 17) then
-    CreateAndEquipDefGenerator(SizeForKind(DefGeneratorBaseSize), RandomTuning(6, 7), Ord(oiDominator));
+    CreateAndEquipDefGenerator(SizeForKind(DefGeneratorBaseSize), ClampStrategicEquipmentLevel(RandomTuning(6, 7)), Ord(oiDominator));
   TechLevel := Galaxy.TechLevel;
-  CreateAndEquipFuelTanks(SizeForKind(FuelTanksBaseSize), RandomInteger(1, TechLevel), Ord(oiDominator));
-  CreateAndEquipRadar(SizeForKind(RadarBaseSize), RandomInteger(1, TechLevel), Ord(oiDominator));
-  CreateAndEquipScanner(SizeForKind(ScannerBaseSize), RandomInteger(1, TechLevel), Ord(oiDominator));
-  CreateAndEquipCargoHook(SizeForKind(CargoHookBaseSize), RandomInteger(1, Min(TechLevel, 7)), Ord(oiDominator));
+  CreateAndEquipFuelTanks(SizeForKind(FuelTanksBaseSize), ClampStrategicEquipmentLevel(RandomInteger(1, TechLevel)), Ord(oiDominator));
+  CreateAndEquipRadar(SizeForKind(RadarBaseSize), ClampStrategicEquipmentLevel(RandomInteger(1, TechLevel)), Ord(oiDominator));
+  CreateAndEquipScanner(SizeForKind(ScannerBaseSize), ClampStrategicEquipmentLevel(RandomInteger(1, TechLevel)), Ord(oiDominator));
+  CreateAndEquipCargoHook(SizeForKind(CargoHookBaseSize), ClampStrategicEquipmentLevel(RandomInteger(1, Min(TechLevel, 7))), Ord(oiDominator));
   Distribution := DominatorWeaponDistributionByTier[Tier];
   WeaponCount := RandomTuning(12, 13);
   for I := 1 to WeaponCount do begin
@@ -465,7 +477,7 @@ begin
              ((DominatorSeries <> dsTerron) or not (WeaponType in [63, 64])) and
              ((DominatorSeries <> dsKeller) or not (WeaponType in [62, 64])));
           if Accepted then CreateAndEquipWeapon(WeaponType,
-            RandomEquipmentSize(WeaponInfos[WeaponType].AverageSize, MaximumSizeIndex, MinimumSizeIndex), RandomTuning(8, 9), Ord(oiDominator));
+            RandomEquipmentSize(WeaponInfos[WeaponType].AverageSize, MaximumSizeIndex, MinimumSizeIndex), ClampStrategicEquipmentLevel(RandomTuning(8, 9)), Ord(oiDominator));
           Chosen := True;
         end;
         Inc(WeaponType);
