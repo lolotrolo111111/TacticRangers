@@ -358,6 +358,7 @@ var
   ControlPercent, MinimumControl, MiddleControl, Tier, MaximumControl: Integer;
   MaximumSizeIndex, MinimumSizeIndex, Rating, WarRating, DistanceRating, Distribution: Integer;
   Roll, I, WeightSum, WeaponCount, TechLevel, ImprovementChance, Attempts: Integer;
+  StrategicMinimumCondition, StrategicMaximumCondition: Integer;
   Equipment: TEquipment;
   WeaponType: Byte;
   Chosen, Accepted: Boolean;
@@ -491,9 +492,18 @@ begin
       dsKeller: if (GetDefGenerator <> nil) and (RandomInteger(1, 100) <= ImprovementChance) then GetDefGenerator.Improve(ikAny);
       dsTerron: if (GetRepairRobot <> nil) and (RandomInteger(1, 100) <= ImprovementChance) then GetRepairRobot.Improve(ikAny);
     end;
+  if Galaxy.IsStrategic500Campaign then begin
+    // Early invasion equipment is assembled from unreliable components. New
+    // ships improve only as the strategic Dominator level rises with the years.
+    StrategicMaximumCondition := Round(RemapClamped(Galaxy.GetStrategicDominatorLevel, 0, 72, 45, 100));
+    StrategicMinimumCondition := Max(25, StrategicMaximumCondition - 25);
+  end else begin
+    StrategicMinimumCondition := 5;
+    StrategicMaximumCondition := 100;
+  end;
   for I := 1 to Inventory.Count - 1 do begin
     Equipment := Inventory[I];
-    Equipment.ConditionPercent := NextRandomIntRange(5, 100, RandomState);
+    Equipment.ConditionPercent := NextRandomIntRange(StrategicMinimumCondition, StrategicMaximumCondition, RandomState);
   end;
   SetInventoryDominatorOwner;
   RefreshDerivedStats(True);
