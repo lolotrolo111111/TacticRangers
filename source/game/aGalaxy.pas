@@ -440,6 +440,9 @@ type
     procedure PruneExpiredGalaxyEvents; // @addr 0x85DFAC @note "Retains the most recent 1825 days."
     function GetCoalitionToPirateSystemRatio: Single; // @addr 0x85E010 @note "Uses the active Galaxy, not Self; denominator is max(pirate systems - 1, 1)."
 
+    function IsStrategic500Campaign: Boolean; // @addr $F0000040 @note "Mod-added: true only for the exact 500% difficulty preset."
+    function GetStrategicDominatorLevel: Integer; // @addr $F0000041 @note "Mod-added: gradual Dominator development over ten campaign years."
+    function GetStrategicCampaignPhase: Integer; // @addr $F0000042 @note "Mod-added: 1..5, used by the strategic report."
     function GetEffectiveDifficultyLevel: Integer; // @addr 0x85E060 @note "With custom rules disabled, reads the active Galaxy difficulty array rather than Self."
     function GetDifficultyTierIndex: TDifficultyTier; // @addr 0x85E0B0 @note "Returns 0..9; tier boundaries are 6, 14, 22, and subsequent increments of eight."
     function InterpolateDifficulty(Level: Integer; AtZero, AtEight, AtSixteen, AtTwentyFour: Single): Single; // @addr 0x85E114 @ida "float __userpurge $name@<st0>(TGalaxy *Self@<eax>, int Level@<edx>, float AtZero@<^12>, float AtEight@<^8>, float AtSixteen@<^4>, float AtTwentyFour@<^0>);" @note "A negative Level selects the effective difficulty; values above 24 extrapolate."
@@ -9769,10 +9772,61 @@ begin
 end;
 { @end $85E010 }
 
+{ Mod-added strategic 500% campaign helpers. The mode is derived only from the
+  already-saved difficulty values, so it remains compatible with existing saves. }
+{ @routine $F0000040 TGalaxy_IsStrategic500Campaign }
+function TGalaxy.IsStrategic500Campaign: Boolean;
+var I: Byte;
+begin
+  Result := not CustomRules.Enabled;
+  if not Result then Exit;
+  for I := 0 to 7 do
+    if DifficultyLevels[I] <> 9 then begin
+      Result := False;
+      Exit;
+    end;
+end;
+{ @end $F0000040 }
+
+{ @routine $F0000041 TGalaxy_GetStrategicDominatorLevel }
+function TGalaxy.GetStrategicDominatorLevel: Integer;
+var Year: Integer;
+begin
+  if not IsStrategic500Campaign then begin
+    Result := -1;
+    Exit;
+  end;
+  Year := CurrentTurn div 365;
+  if Year < 2 then Result := 0
+  else if Year >= 10 then Result := 72
+  else Result := (Year - 1) * 8;
+end;
+{ @end $F0000041 }
+
+{ @routine $F0000042 TGalaxy_GetStrategicCampaignPhase }
+function TGalaxy.GetStrategicCampaignPhase: Integer;
+var Year: Integer;
+begin
+  if not IsStrategic500Campaign then begin
+    Result := 0;
+    Exit;
+  end;
+  Year := CurrentTurn div 365;
+  if Year < 2 then Result := 1
+  else if Year < 5 then Result := 2
+  else if Year < 8 then Result := 3
+  else if Year < 10 then Result := 4
+  else Result := 5;
+end;
+{ @end $F0000042 }
 { @routine $85E060 TGalaxy_GetEffectiveDifficultyLevel }
 function TGalaxy.GetEffectiveDifficultyLevel: Integer;
 var I: Byte;
 begin
+  if IsStrategic500Campaign then begin
+    Result := GetStrategicDominatorLevel;
+    Exit;
+  end;
   Result := 0;
   if CustomRules.Enabled then Result := CustomRules.DominatorStrength
   else
@@ -9845,6 +9899,11 @@ end;
 function TGalaxy.GetInitialDominatorControlPercent: Integer;
 var Level: Integer;
 begin
+  if IsStrategic500Campaign then begin
+    // The generator always processes index zero, leaving exactly the Blazer sector.
+    Result := 0;
+    Exit;
+  end;
   Level := GetEffectiveDifficultyLevel;
   Result := 45 + Round(Level * 1.25);
 end;

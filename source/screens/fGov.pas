@@ -335,6 +335,11 @@ begin
     if Code <> 0 then Text := Text + #13#10 + 'Заказ завершится в день ' + IntToStr(Payload div StrategyOrderTurnFactor)
     else Text := Text + #13#10 + 'Очередь свободна.';
   end else Text := Text + #13#10 + 'Очередь свободна.';
+  if Galaxy.IsStrategic500Campaign then
+    Text := Text + #13#10 + #13#10 + 'Кампания 500%: стратегическая' + #13#10 +
+      'Фаза ' + IntToStr(Galaxy.GetStrategicCampaignPhase) + '/5; уровень Доминаторов: ' +
+      IntToStr(Galaxy.GetStrategicDominatorLevel) + '/72.' + #13#10 +
+      'Рост начинается с 3-го года и идёт раз в год до 10-го.';
   Details.SetText(Text);
 end;
 { @end $F0000015 }
