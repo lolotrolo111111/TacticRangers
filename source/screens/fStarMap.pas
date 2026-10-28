@@ -270,8 +270,12 @@ begin
   RemoteViewStar := Star;
   Star.OpenSpaceScene(MapControls, GetByName('MapPanel'), Self);
   Star.RefreshSpaceObjectPositions;
+  // The minimap belongs to the currently open space scene. Re-centre and
+  // redraw it immediately instead of leaving the last frame of PlayerStar.
+  SpaceProcess.RadarCenter := MakePointF(0, 0);
   SpaceProcess.RadarRange := 0;
   SpaceProcess.ActionRange := 0;
+  SpaceProcess.Space.DrawMinimap;
   if Star.BackgroundImage < 10 then BackgroundPath := 'Bm.BGO.bg0' + IntToStr(Star.BackgroundImage)
   else BackgroundPath := 'Bm.BGO.bg' + IntToStr(Star.BackgroundImage);
   StarField.SetBackgroundImage(BackgroundPath);
@@ -2743,6 +2747,9 @@ begin
   end;
   SpaceProcess.Space.AdvanceTimers;
   SpaceProcess.Space.AdvanceObjects;
+  // Remote views do not run the normal turn-film minimap refresh path.
+  if (RemoteViewStar <> nil) and ((MinimapFrameCounter mod 4) = 0) then
+    SpaceProcess.Space.DrawMinimap;
 end;
 { @end $7AEDFC }
 

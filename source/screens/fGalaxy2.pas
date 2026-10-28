@@ -641,9 +641,12 @@ begin
   if not IsVirtualKeyDown(VK_CONTROL) and not IsVirtualKeyDown(VK_SHIFT) and not IsVirtualKeyDown(VK_MENU) then
   begin
     if (Key = Ord('V')) and (ViewMode = 2) and (SelectedJumpStar <> nil) and
-      (SelectedJumpStar <> GetPlayer.CurrentStar) and (GalaxyReturnScreenId = screenStarMap) then
+      (GalaxyReturnScreenId = screenStarMap) then
     begin
-      RemoteViewRequested := SelectedJumpStar;
+      // Selecting the current system is useful too: return to its ordinary,
+      // fully interactive map instead of rejecting the selection outright.
+      if SelectedJumpStar <> GetPlayer.CurrentStar then
+        RemoteViewRequested := SelectedJumpStar;
       CloseClicked(nil);
     end
     else if Key = Ord('M') then CloseClicked(nil)
