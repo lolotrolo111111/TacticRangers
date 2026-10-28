@@ -8796,6 +8796,10 @@ begin
     if IsHealthEffectActive(6) then DurabilityDamage := DurabilityDamage * 2;
     if IsHealthEffectActive(16) then DurabilityDamage := DurabilityDamage * 0.4;
   end;
+  // The first strategic 500% waves use unreliable components. They take real
+  // battle wear and can break; reliability returns to normal by year 10.
+  if (OwnerId = Byte(oiDominator)) and Galaxy.IsStrategic500Campaign then
+    DurabilityDamage := DurabilityDamage * RemapClamped(Galaxy.GetStrategicDominatorLevel, 0, 72, 4.0, 1.0);
   if CanUseEquipmentTech(Item) and (GetEffectiveSkillLevel(psTechnical) > 0) then
     DurabilityDamage := DurabilityDamage / (1 + GetEffectiveSkillLevel(psTechnical) * 0.2);
   DurabilityDamage := DurabilityDamage * Item.GetFragilityFactor(EmptyDamageFlags);

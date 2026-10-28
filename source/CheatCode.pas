@@ -99,6 +99,12 @@ procedure CheatSudo; // @addr $6B70C0
 procedure CheatEvents; // @addr $6B742C
 procedure CheatSeed; // @addr $6B76EC
 procedure CheatInfos; // @addr $6B780C
+procedure CheatStrategyInfo; // @addr $F0000050 @note "Mod-added strategic 500% debug command."
+procedure CheatStrategyYear; // @addr $F0000051 @note "Mod-added strategic 500% debug command."
+procedure CheatStrategyYear5; // @addr $F0000052 @note "Mod-added strategic 500% debug command."
+procedure CheatStrategyYear10; // @addr $F0000053 @note "Mod-added strategic 500% debug command."
+procedure CheatStrategySpawn; // @addr $F0000054 @note "Mod-added strategic 500% debug command."
+procedure CheatStrategyBreak; // @addr $F0000055 @note "Mod-added strategic 500% debug command."
 
 implementation
 
@@ -1859,6 +1865,117 @@ begin
 end;
 { @end $6B780C }
 
+{ @routine $F0000050 CheatStrategyInfo }
+procedure CheatStrategyInfo;
+var I, DominatorStars, DominatorShips, Year: Integer; Star: TStar;
+begin
+  if (Galaxy = nil) or not Galaxy.IsStrategic500Campaign then begin
+    ShowCheatFeedback('STRAT: эта отладка работает только в кампании 500%.');
+    Exit;
+  end;
+  DominatorStars := 0;
+  DominatorShips := 0;
+  for I := 0 to Galaxy.Stars.Count - 1 do begin
+    Star := TStar(Galaxy.Stars[I]);
+    if Star.ControlFaction = sfDominators then Inc(DominatorStars);
+    Inc(DominatorShips, Star.ShipTypeCounts[stKling]);
+  end;
+  Year := Galaxy.CurrentTurn div 365;
+  ShowCheatFeedback('СТРАТЕГИЯ 500%: ДЕНЬ ' + IntToStr(Galaxy.CurrentTurn) +
+    ', ГОД ' + IntToStr(Year) + ', ФАЗА ' + IntToStr(Galaxy.GetStrategicCampaignPhase) +
+    #13#10 + 'Доминаторы: уровень ' + IntToStr(Galaxy.GetStrategicDominatorLevel) +
+    ', систем ' + IntToStr(DominatorStars) + ', кораблей ' + IntToStr(DominatorShips) +
+    #13#10 + 'Потолок прочности нового снаряжения: ' +
+    IntToStr(Round(RemapClamped(Galaxy.GetStrategicDominatorLevel, 0, 72, 45, 100))) + '%');
+end;
+{ @end $F0000050 }
+
+{ @routine $F0000051 CheatStrategyYear }
+procedure CheatStrategyYear;
+begin
+  if (Galaxy = nil) or not Galaxy.IsStrategic500Campaign then begin
+    ShowCheatFeedback('STRATYEAR: нужна кампания 500%.');
+    Exit;
+  end;
+  Inc(Galaxy.CurrentTurn, 365);
+  CheatStrategyInfo;
+end;
+{ @end $F0000051 }
+
+{ @routine $F0000052 CheatStrategyYear5 }
+procedure CheatStrategyYear5;
+begin
+  if (Galaxy = nil) or not Galaxy.IsStrategic500Campaign then begin
+    ShowCheatFeedback('STRAT5: нужна кампания 500%.');
+    Exit;
+  end;
+  Galaxy.CurrentTurn := 5 * 365;
+  CheatStrategyInfo;
+end;
+{ @end $F0000052 }
+
+{ @routine $F0000053 CheatStrategyYear10 }
+procedure CheatStrategyYear10;
+begin
+  if (Galaxy = nil) or not Galaxy.IsStrategic500Campaign then begin
+    ShowCheatFeedback('STRAT10: нужна кампания 500%.');
+    Exit;
+  end;
+  Galaxy.CurrentTurn := 10 * 365;
+  CheatStrategyInfo;
+end;
+{ @end $F0000053 }
+
+{ @routine $F0000054 CheatStrategySpawn }
+procedure CheatStrategySpawn;
+var Planet: TPlanet; Ship: TKling;
+begin
+  if (Galaxy = nil) or (GetPlayer = nil) or not Galaxy.IsStrategic500Campaign then begin
+    ShowCheatFeedback('STRATSPAWN: нужна кампания 500% и активный корабль игрока.');
+    Exit;
+  end;
+  Planet := GetPlayer.CurrentPlanet;
+  if (Planet = nil) and (GetPlayer.CurrentStar.Planets.Count > 0) then
+    Planet := TPlanet(GetPlayer.CurrentStar.Planets[0]);
+  if Planet = nil then begin
+    ShowCheatFeedback('STRATSPAWN: в текущей системе нет планеты для спавна.');
+    Exit;
+  end;
+  Ship := TObject(Planet.SpawnWeightedDominatorShip) as TKling;
+  if Ship <> nil then
+    ShowCheatFeedback('STRATSPAWN: создан тестовый Доминатор. Уровень снаряжения ' +
+      IntToStr(Galaxy.GetStrategicDominatorLevel) + ', потолок прочности ' +
+      IntToStr(Ship.GetStrategicEquipmentConditionCap) + '%.')
+  else
+    ShowCheatFeedback('STRATSPAWN: создать корабль не удалось.');
+end;
+{ @end $F0000054 }
+
+{ @routine $F0000055 CheatStrategyBreak }
+procedure CheatStrategyBreak;
+var I, J, BrokenCount: Integer; Star: TStar; Ship: TShip; Equipment: TEquipment;
+begin
+  if (Galaxy = nil) or (GetPlayer = nil) then Exit;
+  Star := GetPlayer.CurrentStar;
+  BrokenCount := 0;
+  for I := 0 to Star.Ships.Count - 1 do begin
+    Ship := TShip(Star.Ships[I]);
+    if Ship.OwnerId = Byte(oiDominator) then begin
+      for J := 1 to Ship.Inventory.Count - 1 do begin
+        Equipment := Ship.Inventory[J];
+        Equipment.ConditionPercent := -1;
+        Equipment.BrokenFlag := 1;
+        Inc(BrokenCount);
+      end;
+      Ship.RefreshDerivedStats(True);
+      Break;
+    end;
+  end;
+  if BrokenCount = 0 then ShowCheatFeedback('STRATBREAK: в этой системе нет Доминатора.')
+  else ShowCheatFeedback('STRATBREAK: у тестового Доминатора сломано предметов: ' + IntToStr(BrokenCount) + '.');
+end;
+{ @end $F0000055 }
+
 // Compiler unit entry $875904 registers the native command order.
 initialization
   CheatEntries := TCheatList.Create;
@@ -1924,6 +2041,12 @@ initialization
   CheatEntries.AddCheat('SUDO', CheatSudo);
   CheatEntries.AddCheat('EVENTS', CheatEvents);
   CheatEntries.AddCheat(DecodeTextW('IONOFROSS'), CheatInfos);
+  CheatEntries.AddCheat('STRATINFO', CheatStrategyInfo);
+  CheatEntries.AddCheat('STRATYEAR', CheatStrategyYear);
+  CheatEntries.AddCheat('STRAT5', CheatStrategyYear5);
+  CheatEntries.AddCheat('STRAT10', CheatStrategyYear10);
+  CheatEntries.AddCheat('STRATSPAWN', CheatStrategySpawn);
+  CheatEntries.AddCheat('STRATBREAK', CheatStrategyBreak);
 // Compiler unit entry $6B7B00 calls the virtual destructor directly.
 finalization
   CheatEntries.Destroy;

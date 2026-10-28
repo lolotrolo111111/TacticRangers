@@ -51,6 +51,7 @@ type
     function GetStrategicBossEquipmentLevel: Integer; // @addr $F0000043 @note "Mod-added strategic 500% boss scaling."
     function GetStrategicBossHullScale: Single; // @addr $F0000044 @note "Mod-added strategic 500% boss scaling."
     procedure ApplyStrategicEquipmentWear; // @addr $F0000045 @note "Mod-added strategic 500% equipment condition."
+    function GetStrategicEquipmentConditionCap: Integer; // @addr $F0000046 @note "Mod-added strategic 500% condition ceiling."
     procedure RefreshCombatSkills; // @addr $5CD53C
 
     procedure InitBlazer(Star: TStar); // @addr $5C5FD4
@@ -180,7 +181,7 @@ procedure TKling.ApplyStrategicEquipmentWear;
 var I, MinimumCondition, MaximumCondition: Integer; Equipment: TEquipment;
 begin
   if not Galaxy.IsStrategic500Campaign then Exit;
-  MaximumCondition := Round(RemapClamped(Galaxy.GetStrategicDominatorLevel, 0, 72, 45, 100));
+  MaximumCondition := GetStrategicEquipmentConditionCap;
   MinimumCondition := Max(25, MaximumCondition - 25);
   for I := 1 to Inventory.Count - 1 do begin
     Equipment := Inventory[I];
@@ -188,6 +189,15 @@ begin
   end;
 end;
 { @end $F0000045 }
+
+{ @routine $F0000046 TKling_GetStrategicEquipmentConditionCap }
+function TKling.GetStrategicEquipmentConditionCap: Integer;
+begin
+  Result := 100;
+  if Galaxy.IsStrategic500Campaign then
+    Result := Round(RemapClamped(Galaxy.GetStrategicDominatorLevel, 0, 72, 45, 100));
+end;
+{ @end $F0000046 }
 { @routine $5C5F44 TKling_Destroy }
 destructor TKling.Destroy;
 var I: Integer; Ranger: TRanger;
@@ -549,7 +559,7 @@ begin
   if Galaxy.IsStrategic500Campaign then begin
     // Early invasion equipment is assembled from unreliable components. New
     // ships improve only as the strategic Dominator level rises with the years.
-    StrategicMaximumCondition := Round(RemapClamped(Galaxy.GetStrategicDominatorLevel, 0, 72, 45, 100));
+    StrategicMaximumCondition := GetStrategicEquipmentConditionCap;
     StrategicMinimumCondition := Max(25, StrategicMaximumCondition - 25);
   end else begin
     StrategicMinimumCondition := 5;
@@ -1441,7 +1451,13 @@ begin
   if CurrentPlanet <> nil then GetHull.HullPoints := GetHull.Weight;
   for I := 1 to Inventory.Count - 1 do begin
     Equipment := Inventory[I];
-    if (Equipment.BrokenFlag <> 0) or (Equipment.ConditionPercent < 10) then Equipment.Repair;
+    if (Equipment.BrokenFlag <> 0) or (Equipment.ConditionPercent < 10) then begin
+      Equipment.Repair;
+      // A repair clears the failure but cannot make early invasion hardware
+      // better than its campaign-era condition ceiling.
+      if Galaxy.IsStrategic500Campaign then
+        Equipment.ConditionPercent := Min(Equipment.ConditionPercent, GetStrategicEquipmentConditionCap);
+    end;
   end;
 end;
 { @end $5CC1D4 }
