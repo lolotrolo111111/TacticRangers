@@ -106,6 +106,7 @@ procedure CheatStrategyYear10; // @addr $F0000053 @note "Mod-added strategic 500
 procedure CheatStrategySpawn; // @addr $F0000054 @note "Mod-added strategic 500% debug command."
 procedure CheatStrategyBreak; // @addr $F0000055 @note "Mod-added strategic 500% debug command."
 procedure CheatStrategyTank; // @addr $F0000056 @note "Mod-added strategic 500% debug command."
+procedure CheatStrategyGear; // @addr $F0000057 @note "Mod-added strategic 500% debug command."
 
 implementation
 
@@ -2030,6 +2031,37 @@ begin
 end;
 { @end $F0000056 }
 
+{ @routine $F0000057 CheatStrategyGear }
+procedure CheatStrategyGear;
+var I, J, ItemCount, BrokenCount: Integer; MinimumCondition, MaximumCondition: Double;
+  Star: TStar; Ship: TShip; Equipment: TEquipment;
+begin
+  if (Galaxy = nil) or (GetPlayer = nil) then Exit;
+  Star := GetPlayer.CurrentStar;
+  for I := 0 to Star.Ships.Count - 1 do begin
+    Ship := TShip(Star.Ships[I]);
+    if Ship.OwnerId = Byte(oiDominator) then begin
+      ItemCount := 0;
+      BrokenCount := 0;
+      MinimumCondition := 100;
+      MaximumCondition := 0;
+      for J := 1 to Ship.Inventory.Count - 1 do begin
+        Equipment := Ship.Inventory[J];
+        Inc(ItemCount);
+        MinimumCondition := Min(MinimumCondition, Equipment.ConditionPercent);
+        MaximumCondition := Max(MaximumCondition, Equipment.ConditionPercent);
+        if Equipment.BrokenFlag <> 0 then Inc(BrokenCount);
+      end;
+      ShowCheatFeedback('STRATGEAR: модулей ' + IntToStr(ItemCount) +
+        ', прочность ' + IntToStr(Round(MinimumCondition)) + '..' + IntToStr(Round(MaximumCondition)) +
+        '%, сломано ' + IntToStr(BrokenCount) + '.');
+      Exit;
+    end;
+  end;
+  ShowCheatFeedback('STRATGEAR: в этой системе нет Доминатора.');
+end;
+{ @end $F0000057 }
+
 // Compiler unit entry $875904 registers the native command order.
 initialization
   CheatEntries := TCheatList.Create;
@@ -2102,6 +2134,7 @@ initialization
   CheatEntries.AddCheat('STRATSPAWN', CheatStrategySpawn);
   CheatEntries.AddCheat('STRATBREAK', CheatStrategyBreak);
   CheatEntries.AddCheat('STRATTANK', CheatStrategyTank);
+  CheatEntries.AddCheat('STRATGEAR', CheatStrategyGear);
 // Compiler unit entry $6B7B00 calls the virtual destructor directly.
 finalization
   CheatEntries.Destroy;

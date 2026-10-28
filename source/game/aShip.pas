@@ -3731,18 +3731,29 @@ begin
       else GetEngine.OutputPercent := 0;
     if TypeId <> stTranclucator then
     begin
-      if OwnerId <> Byte(oiDominator) then
+      // Vanilla deliberately exempts Dominators from combat equipment wear.
+      // Strategic 500% reverses that exemption: their modules must fail under
+      // sustained fire just as Coalition equipment does.
+      if (OwnerId <> Byte(oiDominator)) or Galaxy.IsStrategic500Campaign then
       begin
-        Wear := RemapClamped(AdjustedDamage, 1, GetHull.Weight * 0.1, 0.05, 0.15);
-        if Self is TRanger then
+        if OwnerId = Byte(oiDominator) then
         begin
-          if GetPlayer = Self then Wear := Wear
-          else Wear := Wear * 0.8;
+          // A testable and meaningful rate for the extended strategic fights:
+          // even a high-HP target accumulates component damage each hit.
+          Wear := RemapClamped(AdjustedDamage, 1, Max(1, GetHull.Weight * 0.05), 2.0, 8.0);
         end
-        else if Self is TWarrior then
-        begin
-          Wear := Wear * 0.5;
-          if (Self as TWarrior).WarriorType = wtFlagship then Wear := Wear * 0.6;
+        else begin
+          Wear := RemapClamped(AdjustedDamage, 1, GetHull.Weight * 0.1, 0.05, 0.15);
+          if Self is TRanger then
+          begin
+            if GetPlayer = Self then Wear := Wear
+            else Wear := Wear * 0.8;
+          end
+          else if Self is TWarrior then
+          begin
+            Wear := Wear * 0.5;
+            if (Self as TWarrior).WarriorType = wtFlagship then Wear := Wear * 0.6;
+          end;
         end;
         if ScannerEffects and (Dword(DamageFlags) and (1 shl Ord(dkReduceEngine)) <> 0) and (GetEngine <> nil) and (GetEngine.BrokenFlag = 0) then
         begin
