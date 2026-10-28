@@ -273,7 +273,9 @@ begin
   // The minimap belongs to the currently open space scene. Re-centre and
   // redraw it immediately instead of leaving the last frame of PlayerStar.
   SpaceProcess.RadarCenter := MakePointF(0, 0);
-  SpaceProcess.RadarRange := 0;
+  // Planet and ship minimap icons are hidden by the native radar filter.
+  // A remote camera is an observer view, so expose the entire system.
+  SpaceProcess.RadarRange := Max(10000, Star.ComputeMapDiameter * 2);
   SpaceProcess.ActionRange := 0;
   SpaceProcess.Space.DrawMinimap;
   if Star.BackgroundImage < 10 then BackgroundPath := 'Bm.BGO.bg0' + IntToStr(Star.BackgroundImage)
