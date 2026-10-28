@@ -155,6 +155,7 @@ type
     procedure Equip; // @addr 0x73420C
     procedure Unequip; virtual; // @addr 0x734284 @slot 0x2C
     procedure Repair; virtual; // @addr 0x7342FC @slot 0x30
+    function GetMaximumConditionPercent: Integer; // @addr $F0000047 @note "Mod-added strategic 500% equipment condition ceiling."
     function NeedsRepair: Boolean; // @addr 0x73431C @note "Tests hull damage or supported equipment below 90 percent condition."
     function Clone: TItem; virtual; // @addr 0x7339EC @slot 0x48 @note "Allocates a new item ID and resolves references in the current galaxy; changes LoadedSaveVersion."
 
@@ -1355,10 +1356,25 @@ end;
 { @routine $7342FC TEquipment_Repair }
 procedure TEquipment.Repair;
 begin
-  ConditionPercent := 100;
+  ConditionPercent := GetMaximumConditionPercent;
   BrokenFlag := 0;
 end;
 { @end $7342FC }
+
+{ @routine $F0000047 TEquipment_GetMaximumConditionPercent }
+function TEquipment.GetMaximumConditionPercent: Integer;
+var Level: Integer;
+begin
+  Result := 100;
+  // Bound to the individual item, not the ship that carries it. Thus looted
+  // early Dominator equipment remains limited when repaired by a human.
+  if (OwnerId = Byte(oiDominator)) and (Galaxy <> nil) and Galaxy.IsStrategic500Campaign then begin
+    Level := GetLevel;
+    if Level < 1 then Level := 1;
+    Result := Round(RemapClamped(Level, 1, 8, 45, 100));
+  end;
+end;
+{ @end $F0000047 }
 
 { @routine $73431C TEquipment_NeedsRepair }
 function TEquipment.NeedsRepair: Boolean;
@@ -1368,14 +1384,16 @@ begin
   if ItemType = t_Hull then
     Result := (Self as THull).HullPoints < (Self as THull).Weight
   else
-    Result := (Byte(ItemType) in RepairableTypes) and (ConditionPercent < 90);
+    Result := (Byte(ItemType) in RepairableTypes) and
+      (ConditionPercent < GetMaximumConditionPercent * 0.9);
 end;
 { @end $73431C }
 
 { @routine $7343A0 TEquipment_CalculateRepairCost }
 function TEquipment.CalculateRepairCost: Integer;
-var DamagePercent: Double;
+var DamagePercent: Double; MaximumCondition: Integer;
 begin
+  MaximumCondition := GetMaximumConditionPercent;
   if Self is TCountableItem then
   begin
     Result := 0;
@@ -1392,14 +1410,14 @@ begin
   end
   else if ItemType in [t_FuelTanks..t_CustomWeapon, t_Satellite] then
   begin
-    if ConditionPercent = 100 then Result := 0
-    else Result := RoundAndTruncateToTens((100 - Round(ConditionPercent)) * ((Cost div 7) / 100) + Cost div 20 + 10);
+    if ConditionPercent >= MaximumCondition then Result := 0
+    else Result := RoundAndTruncateToTens((MaximumCondition - Round(ConditionPercent)) * ((Cost div 7) / 100) + Cost div 20 + 10);
     if BrokenFlag <> 0 then Result := Round(Result * 1.3);
   end
   else if ItemType in [t_Artefact, t_ArtefactHull..t_ArtefactAntigrav, t_ArtDefToEnergy..t_ArtGiperJump, t_ArtBio..t_ArtFastRacks] then
   begin
-    if ConditionPercent = 100 then Result := 0
-    else Result := RoundAndTruncateToTens((100 - Round(ConditionPercent)) * ((Cost div 5) / 100) + Cost div 10 + 10);
+    if ConditionPercent >= MaximumCondition then Result := 0
+    else Result := RoundAndTruncateToTens((MaximumCondition - Round(ConditionPercent)) * ((Cost div 5) / 100) + Cost div 10 + 10);
     if BrokenFlag <> 0 then Result := Round(Result * 1.3);
     Result := Result * 2;
   end
