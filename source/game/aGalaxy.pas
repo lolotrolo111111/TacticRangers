@@ -759,6 +759,7 @@ var
   PlayerStar: TStar; // @addr 0x88C28C
   PlayerDialogueRequestCount: Byte; // @addr $88C290 Incremented when a ship dialogue passes the shared message-delay threshold; only count <= 1 is accepted.
   WingmenPendingLeadershipPenalty: TList; // @addr 0x88C294  Borrowed TShip entries.
+  StrategicDebugYearOverride: Integer = -1; // @addr $F0000060 Mod-only transient test setting; -1 follows the saved campaign date.
 
 function GameTurnToDateTime(Turn: Integer): Double; // @addr 0x84EB6C
 function FormatGameTurnDate(Turn: Integer): WideString; // @addr 0x84EB90 @ida "void __usercall $name(int Turn@<eax>, unsigned __int16 **Result@<edx>);"
@@ -9796,7 +9797,8 @@ begin
     Result := -1;
     Exit;
   end;
-  Year := CurrentTurn div 365;
+  if StrategicDebugYearOverride >= 0 then Year := StrategicDebugYearOverride
+  else Year := CurrentTurn div 365;
   if Year < 2 then Result := 0
   else if Year >= 10 then Result := 72
   else Result := (Year - 1) * 8;
@@ -9811,7 +9813,8 @@ begin
     Result := 0;
     Exit;
   end;
-  Year := CurrentTurn div 365;
+  if StrategicDebugYearOverride >= 0 then Year := StrategicDebugYearOverride
+  else Year := CurrentTurn div 365;
   if Year < 2 then Result := 1
   else if Year < 5 then Result := 2
   else if Year < 8 then Result := 3

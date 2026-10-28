@@ -1867,7 +1867,7 @@ end;
 
 { @routine $F0000050 CheatStrategyInfo }
 procedure CheatStrategyInfo;
-var I, DominatorStars, DominatorShips, Year: Integer; Star: TStar;
+var I, DominatorStars, DominatorShips, Year: Integer; Star: TStar; DebugText: WideString;
 begin
   if (Galaxy = nil) or not Galaxy.IsStrategic500Campaign then begin
     ShowCheatFeedback('STRAT: эта отладка работает только в кампании 500%.');
@@ -1880,9 +1880,15 @@ begin
     if Star.ControlFaction = sfDominators then Inc(DominatorStars);
     Inc(DominatorShips, Star.ShipTypeCounts[stKling]);
   end;
-  Year := Galaxy.CurrentTurn div 365;
+  if StrategicDebugYearOverride >= 0 then begin
+    Year := StrategicDebugYearOverride;
+    DebugText := ' [ТЕСТ]';
+  end else begin
+    Year := Galaxy.CurrentTurn div 365;
+    DebugText := '';
+  end;
   ShowCheatFeedback('СТРАТЕГИЯ 500%: ДЕНЬ ' + IntToStr(Galaxy.CurrentTurn) +
-    ', ГОД ' + IntToStr(Year) + ', ФАЗА ' + IntToStr(Galaxy.GetStrategicCampaignPhase) +
+    ', ГОД ' + IntToStr(Year) + DebugText + ', ФАЗА ' + IntToStr(Galaxy.GetStrategicCampaignPhase) +
     #13#10 + 'Доминаторы: уровень ' + IntToStr(Galaxy.GetStrategicDominatorLevel) +
     ', систем ' + IntToStr(DominatorStars) + ', кораблей ' + IntToStr(DominatorShips) +
     #13#10 + 'Потолок прочности нового снаряжения: ' +
@@ -1897,7 +1903,8 @@ begin
     ShowCheatFeedback('STRATYEAR: нужна кампания 500%.');
     Exit;
   end;
-  Inc(Galaxy.CurrentTurn, 365);
+  if StrategicDebugYearOverride < 0 then StrategicDebugYearOverride := Galaxy.CurrentTurn div 365;
+  Inc(StrategicDebugYearOverride);
   CheatStrategyInfo;
 end;
 { @end $F0000051 }
@@ -1909,7 +1916,7 @@ begin
     ShowCheatFeedback('STRAT5: нужна кампания 500%.');
     Exit;
   end;
-  Galaxy.CurrentTurn := 5 * 365;
+  StrategicDebugYearOverride := 5;
   CheatStrategyInfo;
 end;
 { @end $F0000052 }
@@ -1921,7 +1928,7 @@ begin
     ShowCheatFeedback('STRAT10: нужна кампания 500%.');
     Exit;
   end;
-  Galaxy.CurrentTurn := 10 * 365;
+  StrategicDebugYearOverride := 10;
   CheatStrategyInfo;
 end;
 { @end $F0000053 }

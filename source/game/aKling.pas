@@ -178,14 +178,15 @@ end;
 
 { @routine $F0000045 TKling_ApplyStrategicEquipmentWear }
 procedure TKling.ApplyStrategicEquipmentWear;
-var I, MinimumCondition, MaximumCondition: Integer; Equipment: TEquipment;
+var I: Integer; Equipment: TEquipment;
 begin
   if not Galaxy.IsStrategic500Campaign then Exit;
-  MaximumCondition := GetStrategicEquipmentConditionCap;
-  MinimumCondition := Max(25, MaximumCondition - 25);
   for I := 1 to Inventory.Count - 1 do begin
     Equipment := Inventory[I];
-    Equipment.ConditionPercent := NextRandomIntRange(MinimumCondition, MaximumCondition, RandomState);
+    // The UI correctly presents brand-new equipment as full. Its lower real
+    // durability is modelled through battle wear, not a half-empty bar.
+    Equipment.ConditionPercent := 100;
+    Equipment.BrokenFlag := 0;
   end;
 end;
 { @end $F0000045 }
@@ -557,10 +558,10 @@ begin
       dsTerron: if (GetRepairRobot <> nil) and (RandomInteger(1, 100) <= ImprovementChance) then GetRepairRobot.Improve(ikAny);
     end;
   if Galaxy.IsStrategic500Campaign then begin
-    // Early invasion equipment is assembled from unreliable components. New
-    // ships improve only as the strategic Dominator level rises with the years.
-    StrategicMaximumCondition := GetStrategicEquipmentConditionCap;
-    StrategicMinimumCondition := Max(25, StrategicMaximumCondition - 25);
+    // New equipment starts with a full visible condition bar. Its effective
+    // durability is determined by the strategic GTU in combat wear code.
+    StrategicMaximumCondition := 100;
+    StrategicMinimumCondition := 100;
   end else begin
     StrategicMinimumCondition := 5;
     StrategicMaximumCondition := 100;
@@ -1451,13 +1452,7 @@ begin
   if CurrentPlanet <> nil then GetHull.HullPoints := GetHull.Weight;
   for I := 1 to Inventory.Count - 1 do begin
     Equipment := Inventory[I];
-    if (Equipment.BrokenFlag <> 0) or (Equipment.ConditionPercent < 10) then begin
-      Equipment.Repair;
-      // A repair clears the failure but cannot make early invasion hardware
-      // better than its campaign-era condition ceiling.
-      if Galaxy.IsStrategic500Campaign then
-        Equipment.ConditionPercent := Min(Equipment.ConditionPercent, GetStrategicEquipmentConditionCap);
-    end;
+    if (Equipment.BrokenFlag <> 0) or (Equipment.ConditionPercent < 10) then Equipment.Repair;
   end;
 end;
 { @end $5CC1D4 }
