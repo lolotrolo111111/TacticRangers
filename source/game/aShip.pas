@@ -7240,6 +7240,10 @@ begin
   if (RepairRobot.EquippedFlag = 0) and (RepairRobot.SpecialModuleIndex <> 0) then
     Inc(Bonus, GetEquipmentStatBonus(Ord(bonDroid), RepairRobot));
   Value := RepairRobot.RepairPoints;
+  // STRATTANK is a controlled debug fixture. TRepairRobot stores its base
+  // value in a byte, so the high test value is exposed here instead.
+  if (OwnerId = Byte(oiDominator)) and (Name = 'DEBUG TANK') then
+    Value := 1000;
   Value := Value + CountActiveArtefacts(Ord(t_ArtefactDroid)) * (DroidArtefactRepair + DroidArtefactBoostRepair * Byte(CanBoostArtefact(Ord(t_ArtefactDroid), RepairRobot, False)));
   Result := Max(0, Value + Bonus);
 end;

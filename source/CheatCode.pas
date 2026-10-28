@@ -105,6 +105,7 @@ procedure CheatStrategyYear5; // @addr $F0000052 @note "Mod-added strategic 500%
 procedure CheatStrategyYear10; // @addr $F0000053 @note "Mod-added strategic 500% debug command."
 procedure CheatStrategySpawn; // @addr $F0000054 @note "Mod-added strategic 500% debug command."
 procedure CheatStrategyBreak; // @addr $F0000055 @note "Mod-added strategic 500% debug command."
+procedure CheatStrategyTank; // @addr $F0000056 @note "Mod-added strategic 500% debug command."
 
 implementation
 
@@ -1983,6 +1984,43 @@ begin
 end;
 { @end $F0000055 }
 
+{ @routine $F0000056 CheatStrategyTank }
+procedure CheatStrategyTank;
+var I: Integer; Planet: TPlanet; Ship: TKling; Hull: THull; Robot: TRepairRobot;
+begin
+  if (Galaxy = nil) or (GetPlayer = nil) then begin
+    ShowCheatFeedback('STRATTANK: нужен активный корабль игрока.');
+    Exit;
+  end;
+  Planet := GetPlayer.CurrentPlanet;
+  if (Planet = nil) and (GetPlayer.CurrentStar.Planets.Count > 0) then
+    Planet := TPlanet(GetPlayer.CurrentStar.Planets[0]);
+  if Planet = nil then begin
+    ShowCheatFeedback('STRATTANK: в текущей системе нет планеты для спавна.');
+    Exit;
+  end;
+  Ship := TObject(Planet.SpawnWeightedDominatorShip) as TKling;
+  if Ship = nil then begin
+    ShowCheatFeedback('STRATTANK: создать корабль не удалось.');
+    Exit;
+  end;
+  // Keep the original hull object, then remove every direct component. This
+  // leaves a legal ship cache with no weapons and no defence generator.
+  Hull := Ship.GetHull;
+  for I := Ship.Inventory.Count - 1 downto 1 do Ship.Inventory.Delete(I);
+  Hull.Weight := 10000;
+  Hull.HullPoints := 10000;
+  Hull.OwnerId := Byte(oiDominator);
+  Ship.Name := 'DEBUG TANK';
+  Ship.RebuildEquipmentCache;
+  Robot := Ship.CreateAndEquipRepairRobot(Round(RepairRobotBaseSize), 1, Byte(oiDominator));
+  Robot.RepairPoints := 255; // Storage is a byte; CalculateRepairPoints grants 1000 to this test ship.
+  Ship.RebuildEquipmentCache;
+  Ship.RefreshDerivedStats(True);
+  ShowCheatFeedback('STRATTANK: создан Доминатор-танк: 10 000 HP, дроид 1 000 HP, без оружия и ГЗП.');
+end;
+{ @end $F0000056 }
+
 // Compiler unit entry $875904 registers the native command order.
 initialization
   CheatEntries := TCheatList.Create;
@@ -2054,6 +2092,7 @@ initialization
   CheatEntries.AddCheat('STRAT10', CheatStrategyYear10);
   CheatEntries.AddCheat('STRATSPAWN', CheatStrategySpawn);
   CheatEntries.AddCheat('STRATBREAK', CheatStrategyBreak);
+  CheatEntries.AddCheat('STRATTANK', CheatStrategyTank);
 // Compiler unit entry $6B7B00 calls the virtual destructor directly.
 finalization
   CheatEntries.Destroy;
