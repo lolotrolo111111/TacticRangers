@@ -149,6 +149,7 @@ type
     procedure BeginRemoteView(Star: TStar); // @addr $F0000020 @note "Mod-added camera."
     procedure EndRemoteView; // @addr $F0000021 @note "Mod-added camera."
     procedure RemoteViewClick(Sender: TObjectGI; KeyState: Cardinal; Point: TPoint); // @addr $F0000022 @ida "void __userpurge $name(TfStarMap *Self@<eax>, TObjectGI *Sender@<edx>, unsigned int KeyState@<ecx>, TPoint *Point@<^0>);" @note "Mod-added camera."
+    procedure AdvanceRemoteViewTransition(Timer: PCallbackTimerGI; UserData: Integer); // @addr $F0000024 @note "Mod-added camera fly-in animation."
     procedure CenterMapForTalk(Position: TPointF); // @addr 0x7A5FB8 @ida "void __usercall $name(TfStarMap *Self@<eax>, TPointF *Position@<edx>);"
     procedure RestorePendingSceneObjects; // @addr 0x7A8AE8
     procedure BuildSpaceBackground(StarField: TStarFieldGI; SpaceImage: TSpaceImgGI; Seed: Cardinal; BackgroundIndex: Integer); // @addr 0x7A8CA4
@@ -253,10 +254,14 @@ uses Globals, GlobalsV, SE_Process, GR_Main, ThreadCalc, aCalc, aPlayer, EC_Str,
 var
   RemoteViewStar: TStar = nil;
   RemoteViewSavedCenter: TPoint;
+  RemoteViewTransitionTimer: PCallbackTimerGI = nil;
+  RemoteViewTransitionProgress: Single = 0;
+  RemoteViewTransitionStartCenter: TPoint;
+  RemoteViewTransitionBackgroundScale: Single = 1;
 
 { @routine $F0000020 TfStarMap_BeginRemoteView }
 procedure TfStarMap.BeginRemoteView(Star: TStar);
-var BackgroundPath: WideString;
+var BackgroundPath: WideString; Direction: TPointF; Distance: Single;
 begin
   if (Star = nil) or (Mode <> smmOrders) or (Star = PlayerStar) then Exit;
   RemoteViewSavedCenter := GetMapCenter;
@@ -267,7 +272,6 @@ begin
   Star.RefreshSpaceObjectPositions;
   SpaceProcess.RadarRange := 0;
   SpaceProcess.ActionRange := 0;
-  SetMapCenter(Classes.Point(0, 0));
   if Star.BackgroundImage < 10 then BackgroundPath := 'Bm.BGO.bg0' + IntToStr(Star.BackgroundImage)
   else BackgroundPath := 'Bm.BGO.bg' + IntToStr(Star.BackgroundImage);
   StarField.SetBackgroundImage(BackgroundPath);
@@ -278,8 +282,22 @@ begin
   MapControls.RightButtonDownCallback := nil;
   MapControls.MouseMoveCallback := nil;
   SpaceEffectsTimer := ScheduleCallbackTimer(18, 18, AdvanceSpaceEffects);
+  // Start outside the target system in the same direction as the chosen star
+  // lies in the galaxy, then ease the camera down to the local system centre.
+  Direction.X := Star.Position.X - PlayerStar.Position.X;
+  Direction.Y := Star.Position.Y - PlayerStar.Position.Y;
+  Distance := Sqrt(Direction.X * Direction.X + Direction.Y * Direction.Y);
+  if Distance < 0.001 then begin Direction.X := 1; Direction.Y := 0 end
+  else begin Direction.X := Direction.X / Distance; Direction.Y := Direction.Y / Distance end;
+  RemoteViewTransitionStartCenter := Classes.Point(Round(-Direction.X * 1200), Round(-Direction.Y * 1200));
+  RemoteViewTransitionProgress := 0;
+  RemoteViewTransitionBackgroundScale := StarField.BackgroundScale;
+  StarField.BackgroundScale := RemoteViewTransitionBackgroundScale * 0.35;
+  SetMapCenter(RemoteViewTransitionStartCenter);
+  if RemoteViewTransitionTimer <> nil then CancelCallbackTimer(RemoteViewTransitionTimer);
+  RemoteViewTransitionTimer := ScheduleCallbackTimer(18, 18, AdvanceRemoteViewTransition);
   FullFrameRedrawRequested := True;
-  ShowLargeHelp(Star.Name + '  |  ESC: return  |  arrows: camera');
+  ShowLargeHelp('ПЕРЕХОД К СИСТЕМЕ  ' + Star.Name);
 end;
 { @end $F0000020 }
 
@@ -288,6 +306,10 @@ procedure TfStarMap.EndRemoteView;
 var BackgroundPath: WideString;
 begin
   if RemoteViewStar = nil then Exit;
+  if RemoteViewTransitionTimer <> nil then begin
+    CancelCallbackTimer(RemoteViewTransitionTimer);
+    RemoteViewTransitionTimer := nil;
+  end;
   if SpaceEffectsTimer <> nil then
   begin
     CancelCallbackTimer(SpaceEffectsTimer);
@@ -308,6 +330,36 @@ begin
   HideLargeHelp;
 end;
 { @end $F0000021 }
+
+{ @routine $F0000024 TfStarMap_AdvanceRemoteViewTransition }
+procedure TfStarMap.AdvanceRemoteViewTransition(Timer: PCallbackTimerGI; UserData: Integer);
+var Smooth: Single;
+begin
+  if RemoteViewStar = nil then begin
+    if RemoteViewTransitionTimer <> nil then begin
+      CancelCallbackTimer(RemoteViewTransitionTimer);
+      RemoteViewTransitionTimer := nil;
+    end;
+    Exit;
+  end;
+  RemoteViewTransitionProgress := Min(1.0, RemoteViewTransitionProgress + 0.035);
+  // Cubic ease-out: quick approach, then a soft stop above the system.
+  Smooth := 1 - Power(1 - RemoteViewTransitionProgress, 3);
+  SetMapCenter(Classes.Point(Round(RemoteViewTransitionStartCenter.X * (1 - Smooth)),
+    Round(RemoteViewTransitionStartCenter.Y * (1 - Smooth))));
+  StarField.BackgroundScale := RemoteViewTransitionBackgroundScale * (0.35 + 0.65 * Smooth);
+  FullFrameRedrawRequested := True;
+  if RemoteViewTransitionProgress >= 1 then begin
+    if RemoteViewTransitionTimer <> nil then begin
+      CancelCallbackTimer(RemoteViewTransitionTimer);
+      RemoteViewTransitionTimer := nil;
+    end;
+    SetMapCenter(Classes.Point(0, 0));
+    StarField.BackgroundScale := RemoteViewTransitionBackgroundScale;
+    ShowLargeHelp(RemoteViewStar.Name + '  |  ESC: return  |  arrows: camera');
+  end;
+end;
+{ @end $F0000024 }
 
 { @routine $F0000022 TfStarMap_RemoteViewClick }
 procedure TfStarMap.RemoteViewClick(Sender: TObjectGI; KeyState: Cardinal; Point: TPoint);
