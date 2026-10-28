@@ -2012,12 +2012,21 @@ begin
   Hull.HullPoints := 10000;
   Hull.OwnerId := Byte(oiDominator);
   Ship.Name := 'DEBUG TANK';
+  // SpawnWeightedDominatorShip normally starts an NPC docked at its source
+  // planet. A debug fixture must be observable immediately, so force it into
+  // normal space near the player instead of waiting for its NPC take-off AI.
+  Ship.CurrentPlanet := nil;
+  Ship.DockedTo := nil;
+  Ship.InHyperspace := False;
+  Ship.Order := soNone;
+  Ship.Position.X := GetPlayer.Position.X + 250;
+  Ship.Position.Y := GetPlayer.Position.Y;
   Ship.RebuildEquipmentCache;
   Robot := Ship.CreateAndEquipRepairRobot(Round(RepairRobotBaseSize), 1, Byte(oiDominator));
   Robot.RepairPoints := 255; // Storage is a byte; CalculateRepairPoints grants 1000 to this test ship.
   Ship.RebuildEquipmentCache;
   Ship.RefreshDerivedStats(True);
-  ShowCheatFeedback('STRATTANK: создан Доминатор-танк: 10 000 HP, дроид 1 000 HP, без оружия и ГЗП.');
+  ShowCheatFeedback('STRATTANK: танк создан рядом с игроком: 10 000 HP, дроид 1 000 HP, без оружия и ГЗП.');
 end;
 { @end $F0000056 }
 
