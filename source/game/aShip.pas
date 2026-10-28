@@ -8796,11 +8796,6 @@ begin
     if IsHealthEffectActive(6) then DurabilityDamage := DurabilityDamage * 2;
     if IsHealthEffectActive(16) then DurabilityDamage := DurabilityDamage * 0.4;
   end;
-  // New strategic equipment looks factory-new, but only has 45% of normal
-  // effective durability at campaign start. This preserves a full UI bar
-  // while allowing actual combat failures; GTU growth reaches normal by year 10.
-  if (OwnerId = Byte(oiDominator)) and Galaxy.IsStrategic500Campaign then
-    DurabilityDamage := DurabilityDamage * (100 / RemapClamped(Galaxy.GetStrategicDominatorLevel, 0, 72, 45, 100));
   if CanUseEquipmentTech(Item) and (GetEffectiveSkillLevel(psTechnical) > 0) then
     DurabilityDamage := DurabilityDamage / (1 + GetEffectiveSkillLevel(psTechnical) * 0.2);
   DurabilityDamage := DurabilityDamage * Item.GetFragilityFactor(EmptyDamageFlags);

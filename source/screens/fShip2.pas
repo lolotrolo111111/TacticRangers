@@ -6026,7 +6026,7 @@ var
   Origin: Integer;
   Text: WideString;
   SpecialHull: Boolean;
-  BarWidth, CapWidth, MinimumWidth: Integer;
+  BarWidth, CapWidth, MinimumWidth, MinimumBarWidth: Integer;
   Reserved9C, ReservedA0, ReservedA4: Integer;
 begin
   Equipment := Item as TEquipment;
@@ -6169,7 +6169,12 @@ begin
       begin
         if Equipment is THull then BarWidth := Round(Sqrt(Equipment.Weight / HullBaseSize / Max(0.1,Equipment.GetFragilityFactor([]))) * 64)
         else BarWidth := Round(64 / Max(0.1,Equipment.GetFragilityFactor([])));
-        BarWidth := Min(192,Max(32,BarWidth));
+        MinimumBarWidth := 32;
+        // Do not clamp early strategic Dominator gear to the ordinary
+        // half-width minimum: its short racial durability scale is intentional.
+        if (Equipment.OwnerId = Byte(oiDominator)) and (Galaxy <> nil) and Galaxy.IsStrategic500Campaign then
+          MinimumBarWidth := 16;
+        BarWidth := Min(192,Max(MinimumBarWidth,BarWidth));
         with GetByName('InfoDurableLeft') as TImageGI do
         begin
           CapWidth := GetContentSize.X;
