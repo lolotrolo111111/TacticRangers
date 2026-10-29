@@ -152,6 +152,7 @@ type
     procedure AdvanceRemoteViewTransition(Timer: PCallbackTimerGI; UserData: Integer); // @addr $F0000024 @note "Mod-added camera fly-in animation."
     procedure ShowRemotePlanetDossier(Planet: TPlanet); // @addr $F0000025 @note "Mod-added strategic planet dossier."
     procedure RefreshRemotePlanetPreview; // @addr $F0000026 @note "Mod-added live planet preview."
+    procedure RemotePlanetManagementClicked(Sender: TObjectGI; KeyState: Cardinal; Point: TPoint); // @addr $F0000029 @ida "void __userpurge $name(TfStarMap *Self@<eax>, TObjectGI *Sender@<edx>, unsigned int KeyState@<ecx>, TPoint *Point@<^0>);" @note "Mod-added dossier action."
     procedure CenterMapForTalk(Position: TPointF); // @addr 0x7A5FB8 @ida "void __usercall $name(TfStarMap *Self@<eax>, TPointF *Position@<edx>);"
     procedure RestorePendingSceneObjects; // @addr 0x7A8AE8
     procedure BuildSpaceBackground(StarField: TStarFieldGI; SpaceImage: TSpaceImgGI; Seed: Cardinal; BackgroundIndex: Integer); // @addr 0x7A8CA4
@@ -251,7 +252,7 @@ var
 implementation
 
 uses Globals, GlobalsV, SE_Process, GR_Main, ThreadCalc, aCalc, aPlayer, EC_Str,
-  GI_GAI, aEFilmEnd, aMyFunction, fLoad, fFilmFile, Windows, Messages, GI_MultiImage, aGalaxyStruct, aScript, fShip2, SysUtils, GR_DX, GR_Rect, SE_Hole, aKling, GR_Gi, aRanger, fGalaxy2, fSaveManager, GI_MessageBox, aConst, aPlanet, aRuins, Robot, aSaveLoad, fLoadRobot, GI_StarFieldImg, Math, Achievements, EC_Mem, aMissile, SE_Missile, SE_Ship2, SE_Container, SE_Ruins, SE_Asteroid, SE_Planet, SE_Star, aEObjInfo, aPirate, aPath, fTalk, fGoodsShop2, aTranclucator, ab_MainForm, fGov;
+  GI_GAI, aEFilmEnd, aMyFunction, fLoad, fFilmFile, Windows, Messages, GI_MultiImage, aGalaxyStruct, aScript, fShip2, SysUtils, GR_DX, GR_Rect, SE_Hole, aKling, GR_Gi, aRanger, fGalaxy2, fSaveManager, GI_MessageBox, aConst, aPlanet, aRuins, Robot, aSaveLoad, fLoadRobot, GI_StarFieldImg, Math, Achievements, EC_Mem, aMissile, SE_Missile, SE_Ship2, SE_Container, SE_Ruins, SE_Asteroid, SE_Planet, SE_Star, aEObjInfo, aPirate, aPath, fTalk, fGoodsShop2, aTranclucator, ab_MainForm, fGov, GI_Frame;
 
 var
   RemoteViewStar: TStar = nil;
@@ -261,6 +262,15 @@ var
   RemoteViewTransitionStartCenter: TPoint;
   RemoteViewTransitionBackgroundScale: Single = 1;
   RemoteViewSelectedPlanet: TPlanet = nil;
+  RemotePlanetDossier: TWindowGI = nil;
+  RemotePlanetPreview: TGraphBufGI = nil;
+  RemotePlanetTitle: TLabelGI = nil;
+  RemotePlanetDetails: TLabelGI = nil;
+  RemotePlanetActionLabel: TLabelGI = nil;
+  RemotePlanetFocusTimer: PCallbackTimerGI = nil;
+  RemotePlanetFocusProgress: Single = 0;
+  RemotePlanetFocusStart: TPoint;
+  RemotePlanetFocusTarget: TPoint;
 
 { @routine $F0000020 TfStarMap_BeginRemoteView }
 procedure TfStarMap.BeginRemoteView(Star: TStar);
@@ -325,6 +335,11 @@ begin
     SpaceEffectsTimer := nil;
   end;
   MapControls.LeftButtonDownCallback := nil;
+  if RemotePlanetFocusTimer <> nil then begin
+    CancelCallbackTimer(RemotePlanetFocusTimer);
+    RemotePlanetFocusTimer := nil;
+  end;
+  if RemotePlanetDossier <> nil then RemotePlanetDossier.SetActive(False);
   RemoteViewSelectedPlanet := nil;
   ShowObjectInfo(nil);
   SpaceProcess.CloseSpace;
@@ -346,6 +361,30 @@ end;
 procedure TfStarMap.AdvanceRemoteViewTransition(Timer: PCallbackTimerGI; UserData: Integer);
 var Smooth: Single;
 begin
+  // The same cadence drives the initial system fly-in and a later approach
+  // to a selected planet. Keeping one callback avoids another map timer.
+  if RemotePlanetFocusTimer <> nil then
+  begin
+    if (RemoteViewSelectedPlanet = nil) or (RemoteViewStar = nil) then Exit;
+    RemotePlanetFocusProgress := Min(1.0, RemotePlanetFocusProgress + 0.045);
+    Smooth := 1 - Power(1 - RemotePlanetFocusProgress, 3);
+    SetMapCenter(Classes.Point(Round(RemotePlanetFocusStart.X +
+      (RemotePlanetFocusTarget.X - RemotePlanetFocusStart.X) * Smooth),
+      Round(RemotePlanetFocusStart.Y + (RemotePlanetFocusTarget.Y - RemotePlanetFocusStart.Y) * Smooth)));
+    if (RemotePlanetFocusProgress >= 0.45) and not RemotePlanetDossier.Active then
+    begin
+      RemotePlanetDossier.SetActive(True);
+      RefreshRemotePlanetPreview;
+    end;
+    FullFrameRedrawRequested := True;
+    if RemotePlanetFocusProgress >= 1 then
+    begin
+      CancelCallbackTimer(RemotePlanetFocusTimer);
+      RemotePlanetFocusTimer := nil;
+      ShowLargeHelp(RemoteViewSelectedPlanet.Name + '  |  ESC: закрыть досье');
+    end;
+    Exit;
+  end;
   if RemoteViewStar = nil then begin
     if RemoteViewTransitionTimer <> nil then begin
       CancelCallbackTimer(RemoteViewTransitionTimer);
@@ -374,38 +413,98 @@ end;
 
 { @routine $F0000025 TfStarMap_ShowRemotePlanetDossier }
 procedure TfStarMap.ShowRemotePlanetDossier(Planet: TPlanet);
+var W, H, PreviewSize, RightX, RightW: Integer; Frame: TFrameGI;
 begin
   if Planet = nil then Exit;
   RemoteViewSelectedPlanet := Planet;
-  // Reuse the game's native planet dossier: its image is rendered from the
-  // actual planet surface, including atmosphere and the current rotation.
-  ShowObjectInfo(Planet);
-  if Planet.OwnerId in [Ord(oiMaloc)..Ord(oiGaal), Ord(oiPirate)] then
-    (GetByName('InfoPlanetName') as TLabelGI).SetText(WrapTextInColor(
-      Planet.Name + '  //  ' + RemoteViewStar.Name, InfoNameColorTag))
-  else
-    (GetByName('InfoStdName') as TLabelGI).SetText(WrapTextInColor(
-      Planet.Name + '  //  ' + RemoteViewStar.Name, InfoNameColorTag));
-  RefreshRemotePlanetPreview;
-  if Planet.IsCoalitionOwned then
-    ShowLargeHelp('ПЛАНЕТА: ' + Planet.Name + '  |  повторный клик: управление  |  ESC: назад')
-  else
-    ShowLargeHelp('ПЛАНЕТА: ' + Planet.Name + '  |  ESC: назад');
+  // A strategic observer needs a deliberate full-screen focus, not the
+  // small flight tooltip used by the normal map.
+  ShowObjectInfo(nil);
+  if RemotePlanetDossier = nil then
+  begin
+    W := Min(GameScreenWidth - GiScalePixels(48), GiScalePixels(1000));
+    H := Min(GameScreenHeight - GiScalePixels(48), GiScalePixels(620));
+    PreviewSize := Min(H - GiScalePixels(130), W * 46 div 100);
+    RightX := GiScalePixels(38) + PreviewSize + GiScalePixels(35);
+    RightW := W - RightX - GiScalePixels(38);
+    RemotePlanetDossier := TWindowGI.Create(ContentPanel);
+    RemotePlanetDossier.SetDepth(2);
+    RemotePlanetDossier.SetConfigPath('Style.Window.' + GiResourceSuffix + 'MessageBox');
+    RemotePlanetDossier.SetSize(Classes.Point(W, H));
+    RemotePlanetDossier.SetPosition(Classes.Point((GameScreenWidth - W) div 2, (GameScreenHeight - H) div 2));
+    RemotePlanetDossier.UpdateAutoGeometry;
+    Frame := TFrameGI.Create(RemotePlanetDossier);
+    Frame.SetPosition(Classes.Point(GiScalePixels(28), GiScalePixels(70)));
+    Frame.SetSize(Classes.Point(PreviewSize + GiScalePixels(20), PreviewSize + GiScalePixels(20)));
+    Frame.SetKind(fkRect);
+    Frame.SetColor(CurrentPixelFormat.PackRgbBytes(49, 184, 225));
+    Frame.SetFillColor(CurrentPixelFormat.PackRgbBytes(4, 18, 34));
+    Frame.SetFill(True);
+    RemotePlanetPreview := TGraphBufGI.Create(RemotePlanetDossier, False);
+    RemotePlanetPreview.SourceHasPerPixelAlpha := True;
+    RemotePlanetPreview.SetPosition(Classes.Point(GiScalePixels(38), GiScalePixels(80)));
+    RemotePlanetPreview.SetSize(Classes.Point(PreviewSize, PreviewSize));
+    RemotePlanetPreview.SetImageKindX(ikxCenter); RemotePlanetPreview.SetImageKindY(ikyCenter);
+    RemotePlanetTitle := TLabelGI.Create(RemotePlanetDossier);
+    RemotePlanetTitle.SetPosition(Classes.Point(GiScalePixels(30), GiScalePixels(20)));
+    RemotePlanetTitle.SetSize(Classes.Point(W - GiScalePixels(100), GiScalePixels(36)));
+    RemotePlanetTitle.SetFontName(HugeFontName);
+    RemotePlanetTitle.SetTextColor(CurrentPixelFormat.PackRgbBytes(102, 230, 255));
+    RemotePlanetTitle.SetTextAlignX(taxLeft); RemotePlanetTitle.SetTextAlignY(tayCenter);
+    RemotePlanetDetails := TLabelGI.Create(RemotePlanetDossier);
+    RemotePlanetDetails.SetPosition(Classes.Point(RightX, GiScalePixels(96)));
+    RemotePlanetDetails.SetSize(Classes.Point(RightW, H - GiScalePixels(190)));
+    RemotePlanetDetails.SetWordWrapEnabled(True);
+    RemotePlanetDetails.SetFontName(NormalBoldFontName);
+    RemotePlanetDetails.SetTextAlignX(taxLeft); RemotePlanetDetails.SetTextAlignY(tayCenter);
+    RemotePlanetDetails.SetTextColor(CurrentPixelFormat.PackRgbBytes(215, 239, 255));
+    RemotePlanetActionLabel := TLabelGI.Create(RemotePlanetDossier);
+    RemotePlanetActionLabel.SetPosition(Classes.Point(RightX, H - GiScalePixels(78)));
+    RemotePlanetActionLabel.SetSize(Classes.Point(RightW, GiScalePixels(30)));
+    RemotePlanetActionLabel.SetFontName(NormalBoldFontName);
+    RemotePlanetActionLabel.SetTextAlignX(taxCenter); RemotePlanetActionLabel.SetTextAlignY(tayCenter);
+    RemotePlanetActionLabel.SetTextColor(CurrentPixelFormat.PackRgbBytes(80, 225, 255));
+    RemotePlanetActionLabel.SetText('УПРАВЛЕНИЕ ПЛАНЕТОЙ');
+    RemotePlanetActionLabel.LeftButtonDownCallback := RemotePlanetManagementClicked;
+  end;
+  RemotePlanetTitle.SetText(Planet.Name + '  //  ' + RemoteViewStar.Name);
+  RemotePlanetActionLabel.SetActive(Planet.IsCoalitionOwned);
+  RemotePlanetDetails.SetText('ПЛАНЕТАРНОЕ ДОСЬЕ' + #13#10 + #13#10 +
+    'Раса: ' + Planet.GetNativeRaceName + #13#10 +
+    'Население: ' + IntToStr(Round(Planet.Population)) + #13#10 +
+    'Экономика: ' + PlanetEconomyInfo[Ord(Planet.Economy)].DisplayName + #13#10 +
+    'Строй: ' + Planet.GetGovernmentName + #13#10 +
+    'Отношение: ' + Planet.GetRelationLevelTextToShip(GetPlayer) + #13#10 + #13#10 +
+    'Гарнизон: ' + IntToStr(Planet.Warriors.Count) + #13#10 +
+    'Бюджет: ' + IntToStr(Planet.Money) + ' cr.');
+  RemotePlanetDossier.SetActive(False);
+  RemotePlanetFocusStart := GetMapCenter;
+  RemotePlanetFocusTarget := Classes.Point(Round(Planet.GetPosition.X), Round(Planet.GetPosition.Y));
+  RemotePlanetFocusProgress := 0;
+  if RemotePlanetFocusTimer <> nil then CancelCallbackTimer(RemotePlanetFocusTimer);
+  RemotePlanetFocusTimer := ScheduleCallbackTimer(18, 18, AdvanceRemoteViewTransition);
+  ShowLargeHelp('СКАНИРОВАНИЕ ПЛАНЕТЫ  ' + Planet.Name);
   FullFrameRedrawRequested := True;
 end;
 { @end $F0000025 }
+
+{ @routine $F0000029 TfStarMap_RemotePlanetManagementClicked }
+procedure TfStarMap.RemotePlanetManagementClicked(Sender: TObjectGI; KeyState: Cardinal; Point: TPoint);
+begin
+  if (RemoteViewSelectedPlanet <> nil) and RemoteViewSelectedPlanet.IsCoalitionOwned then
+    OpenStrategicPlanet(Self, RemoteViewSelectedPlanet);
+end;
+{ @end $F0000029 }
 
 { @routine $F0000026 TfStarMap_RefreshRemotePlanetPreview }
 procedure TfStarMap.RefreshRemotePlanetPreview;
 var Preview: TGraphBufGI;
 begin
   if (RemoteViewSelectedPlanet = nil) or (RemoteViewSelectedPlanet.Graphic = nil) then Exit;
+  if RemotePlanetPreview = nil then Exit;
   // The space scene advances the planet's real rotation timer. Rendering its
   // surface again here makes the dossier a live hologram rather than a still.
-  if RemoteViewSelectedPlanet.OwnerId in [Ord(oiMaloc)..Ord(oiGaal), Ord(oiPirate)] then
-    Preview := GetByName('InfoPlanetImage') as TGraphBufGI
-  else
-    Preview := GetByName('InfoStdGB') as TGraphBufGI;
+  Preview := RemotePlanetPreview;
   Preview.SourceHasPerPixelAlpha := True;
   TPlanetSE(RemoteViewSelectedPlanet.Graphic).RenderToBuffer(Self, Preview.GraphBuf, False);
   if (Preview.ClientSize.X < Preview.GraphBuf.Width) or (Preview.ClientSize.Y < Preview.GraphBuf.Height) then
@@ -439,14 +538,7 @@ begin
     Planet := TPlanet(RemoteViewStar.Planets[I]);
     if (Planet.Graphic <> nil) and Planet.Graphic.HitTestCursor then
     begin
-      // The first click is a reconnaissance view. A second click on a
-      // coalition planet deliberately enters the existing management menu.
-      if (Planet = RemoteViewSelectedPlanet) and Planet.IsCoalitionOwned then
-      begin
-        OpenStrategicPlanet(Self, Planet);
-        FullFrameRedrawRequested := True;
-      end
-      else ShowRemotePlanetDossier(Planet);
+      ShowRemotePlanetDossier(Planet);
       Exit;
     end;
   end;
@@ -1302,7 +1394,16 @@ procedure TfStarMap.MapKeyDown(Sender: TObjectGI; Key: Cardinal);
 begin
   if RemoteViewStar <> nil then
   begin
-    if Key = VK_ESCAPE then EndRemoteView
+    if Key = VK_ESCAPE then
+    begin
+      if (RemotePlanetDossier <> nil) and RemotePlanetDossier.Active then
+      begin
+        RemotePlanetDossier.SetActive(False);
+        RemoteViewSelectedPlanet := nil;
+        ShowLargeHelp(RemoteViewStar.Name + '  |  выберите планету  |  ESC: назад');
+      end
+      else EndRemoteView;
+    end
     else if Key = VK_LEFT then ScrollLeftHeld := True
     else if Key = VK_RIGHT then ScrollRightHeld := True
     else if Key = VK_UP then ScrollUpHeld := True
