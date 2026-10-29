@@ -150,6 +150,8 @@ type
     procedure EndRemoteView; // @addr $F0000021 @note "Mod-added camera."
     procedure RemoteViewClick(Sender: TObjectGI; KeyState: Cardinal; Point: TPoint); // @addr $F0000022 @ida "void __userpurge $name(TfStarMap *Self@<eax>, TObjectGI *Sender@<edx>, unsigned int KeyState@<ecx>, TPoint *Point@<^0>);" @note "Mod-added camera."
     procedure AdvanceRemoteViewTransition(Timer: PCallbackTimerGI; UserData: Integer); // @addr $F0000024 @note "Mod-added camera fly-in animation."
+    procedure ShowRemotePlanetDossier(Planet: TPlanet); // @addr $F0000025 @note "Mod-added strategic planet dossier."
+    procedure RefreshRemotePlanetPreview; // @addr $F0000026 @note "Mod-added live planet preview."
     procedure CenterMapForTalk(Position: TPointF); // @addr 0x7A5FB8 @ida "void __usercall $name(TfStarMap *Self@<eax>, TPointF *Position@<edx>);"
     procedure RestorePendingSceneObjects; // @addr 0x7A8AE8
     procedure BuildSpaceBackground(StarField: TStarFieldGI; SpaceImage: TSpaceImgGI; Seed: Cardinal; BackgroundIndex: Integer); // @addr 0x7A8CA4
@@ -258,6 +260,7 @@ var
   RemoteViewTransitionProgress: Single = 0;
   RemoteViewTransitionStartCenter: TPoint;
   RemoteViewTransitionBackgroundScale: Single = 1;
+  RemoteViewSelectedPlanet: TPlanet = nil;
 
 { @routine $F0000020 TfStarMap_BeginRemoteView }
 procedure TfStarMap.BeginRemoteView(Star: TStar);
@@ -322,6 +325,8 @@ begin
     SpaceEffectsTimer := nil;
   end;
   MapControls.LeftButtonDownCallback := nil;
+  RemoteViewSelectedPlanet := nil;
+  ShowObjectInfo(nil);
   SpaceProcess.CloseSpace;
   RemoteViewStar := nil;
   PlayerStar.OpenSpaceScene(MapControls, GetByName('MapPanel'), Self);
@@ -367,6 +372,54 @@ begin
 end;
 { @end $F0000024 }
 
+{ @routine $F0000025 TfStarMap_ShowRemotePlanetDossier }
+procedure TfStarMap.ShowRemotePlanetDossier(Planet: TPlanet);
+begin
+  if Planet = nil then Exit;
+  RemoteViewSelectedPlanet := Planet;
+  // Reuse the game's native planet dossier: its image is rendered from the
+  // actual planet surface, including atmosphere and the current rotation.
+  ShowObjectInfo(Planet);
+  if Planet.OwnerId in [Ord(oiMaloc)..Ord(oiGaal), Ord(oiPirate)] then
+    (GetByName('InfoPlanetName') as TLabelGI).SetText(WrapTextInColor(
+      Planet.Name + '  //  ' + RemoteViewStar.Name, InfoNameColorTag))
+  else
+    (GetByName('InfoStdName') as TLabelGI).SetText(WrapTextInColor(
+      Planet.Name + '  //  ' + RemoteViewStar.Name, InfoNameColorTag));
+  RefreshRemotePlanetPreview;
+  if Planet.IsCoalitionOwned then
+    ShowLargeHelp('ПЛАНЕТА: ' + Planet.Name + '  |  повторный клик: управление  |  ESC: назад')
+  else
+    ShowLargeHelp('ПЛАНЕТА: ' + Planet.Name + '  |  ESC: назад');
+  FullFrameRedrawRequested := True;
+end;
+{ @end $F0000025 }
+
+{ @routine $F0000026 TfStarMap_RefreshRemotePlanetPreview }
+procedure TfStarMap.RefreshRemotePlanetPreview;
+var Preview: TGraphBufGI;
+begin
+  if (RemoteViewSelectedPlanet = nil) or (RemoteViewSelectedPlanet.Graphic = nil) then Exit;
+  // The space scene advances the planet's real rotation timer. Rendering its
+  // surface again here makes the dossier a live hologram rather than a still.
+  if RemoteViewSelectedPlanet.OwnerId in [Ord(oiMaloc)..Ord(oiGaal), Ord(oiPirate)] then
+    Preview := GetByName('InfoPlanetImage') as TGraphBufGI
+  else
+    Preview := GetByName('InfoStdGB') as TGraphBufGI;
+  Preview.SourceHasPerPixelAlpha := True;
+  TPlanetSE(RemoteViewSelectedPlanet.Graphic).RenderToBuffer(Self, Preview.GraphBuf, False);
+  if (Preview.ClientSize.X < Preview.GraphBuf.Width) or (Preview.ClientSize.Y < Preview.GraphBuf.Height) then
+  begin
+    if Cardinal(Preview.GraphBuf.Width) >= Cardinal(Preview.GraphBuf.Height) then
+      Preview.GraphBuf.RescaleRgba(Preview.ClientSize.X,
+        Round(Preview.ClientSize.X / Cardinal(Preview.GraphBuf.Width) * Cardinal(Preview.GraphBuf.Height)), 5)
+    else
+      Preview.GraphBuf.RescaleRgba(Round(Preview.ClientSize.Y / Cardinal(Preview.GraphBuf.Height) * Cardinal(Preview.GraphBuf.Width)),
+        Preview.ClientSize.Y, 5);
+  end;
+end;
+{ @end $F0000026 }
+
 { @routine $F0000022 TfStarMap_RemoteViewClick }
 procedure TfStarMap.RemoteViewClick(Sender: TObjectGI; KeyState: Cardinal; Point: TPoint);
 var I: Integer; Ship: TShip; Planet: TPlanet;
@@ -386,12 +439,14 @@ begin
     Planet := TPlanet(RemoteViewStar.Planets[I]);
     if (Planet.Graphic <> nil) and Planet.Graphic.HitTestCursor then
     begin
-      if Planet.IsCoalitionOwned then
+      // The first click is a reconnaissance view. A second click on a
+      // coalition planet deliberately enters the existing management menu.
+      if (Planet = RemoteViewSelectedPlanet) and Planet.IsCoalitionOwned then
       begin
         OpenStrategicPlanet(Self, Planet);
         FullFrameRedrawRequested := True;
       end
-      else ShowLargeHelp(Planet.GetFullName(' ') + '  |  ESC: return');
+      else ShowRemotePlanetDossier(Planet);
       Exit;
     end;
   end;
@@ -2749,6 +2804,10 @@ begin
   end;
   SpaceProcess.Space.AdvanceTimers;
   SpaceProcess.Space.AdvanceObjects;
+  // Refresh the selected planet's native 3D preview at ~14 FPS. This keeps
+  // the dossier smooth while avoiding a costly full-size redraw each tick.
+  if (RemoteViewSelectedPlanet <> nil) and ((MinimapFrameCounter mod 4) = 0) then
+    RefreshRemotePlanetPreview;
   // Remote views do not run the normal turn-film minimap refresh path.
   if (RemoteViewStar <> nil) and ((MinimapFrameCounter mod 4) = 0) then
     SpaceProcess.Space.DrawMinimap;
