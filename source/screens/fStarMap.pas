@@ -263,6 +263,8 @@ var
   RemoteViewTransitionBackgroundScale: Single = 1;
   RemoteViewSelectedPlanet: TPlanet = nil;
   RemotePlanetDossier: TWindowGI = nil;
+  RemotePlanetBackdrop: TFrameGI = nil;
+  RemotePlanetPreviewFrame: TFrameGI = nil;
   RemotePlanetPreview: TGraphBufGI = nil;
   RemotePlanetTitle: TLabelGI = nil;
   RemotePlanetDetails: TLabelGI = nil;
@@ -271,6 +273,8 @@ var
   RemotePlanetFocusProgress: Single = 0;
   RemotePlanetFocusStart: TPoint;
   RemotePlanetFocusTarget: TPoint;
+  RemotePlanetPreviewFinalPosition: TPoint;
+  RemotePlanetPreviewFinalSize: Integer = 0;
 
 { @routine $F0000020 TfStarMap_BeginRemoteView }
 procedure TfStarMap.BeginRemoteView(Star: TStar);
@@ -359,7 +363,7 @@ end;
 
 { @routine $F0000024 TfStarMap_AdvanceRemoteViewTransition }
 procedure TfStarMap.AdvanceRemoteViewTransition(Timer: PCallbackTimerGI; UserData: Integer);
-var Smooth: Single;
+var Smooth, Zoom: Single; PreviewSize: Integer; PreviewPosition: TPoint;
 begin
   // The same cadence drives the initial system fly-in and a later approach
   // to a selected planet. Keeping one callback avoids another map timer.
@@ -371,9 +375,28 @@ begin
     SetMapCenter(Classes.Point(Round(RemotePlanetFocusStart.X +
       (RemotePlanetFocusTarget.X - RemotePlanetFocusStart.X) * Smooth),
       Round(RemotePlanetFocusStart.Y + (RemotePlanetFocusTarget.Y - RemotePlanetFocusStart.Y) * Smooth)));
-    if (RemotePlanetFocusProgress >= 0.45) and not RemotePlanetDossier.Active then
-    begin
+    // After the camera has locked on, fade the map out into an opaque scan
+    // field and grow one hologram from the centre to its final inspection size.
+    if (RemotePlanetFocusProgress >= 0.28) and not RemotePlanetDossier.Active then
       RemotePlanetDossier.SetActive(True);
+    if RemotePlanetDossier.Active then
+    begin
+      Zoom := RemapClamped(RemotePlanetFocusProgress, 0.28, 0.82, 0.08, 1.0);
+      PreviewSize := Max(GiScalePixels(48), Round(RemotePlanetPreviewFinalSize * Zoom));
+      PreviewPosition.X := Round(GameScreenWidth div 2 +
+        (RemotePlanetPreviewFinalPosition.X + RemotePlanetPreviewFinalSize div 2 - GameScreenWidth div 2) * Zoom - PreviewSize div 2);
+      PreviewPosition.Y := Round(GameScreenHeight div 2 +
+        (RemotePlanetPreviewFinalPosition.Y + RemotePlanetPreviewFinalSize div 2 - GameScreenHeight div 2) * Zoom - PreviewSize div 2);
+      RemotePlanetPreviewFrame.SetPosition(Classes.Point(PreviewPosition.X - GiScalePixels(14), PreviewPosition.Y - GiScalePixels(14)));
+      RemotePlanetPreviewFrame.SetSize(Classes.Point(PreviewSize + GiScalePixels(28), PreviewSize + GiScalePixels(28)));
+      RemotePlanetPreview.SetPosition(PreviewPosition);
+      RemotePlanetPreview.SetSize(Classes.Point(PreviewSize, PreviewSize));
+      if RemotePlanetFocusProgress >= 0.68 then
+      begin
+        RemotePlanetTitle.SetActive(True);
+        RemotePlanetDetails.SetActive(True);
+        RemotePlanetActionLabel.SetActive(RemoteViewSelectedPlanet.IsCoalitionOwned);
+      end;
       RefreshRemotePlanetPreview;
     end;
     FullFrameRedrawRequested := True;
@@ -413,7 +436,7 @@ end;
 
 { @routine $F0000025 TfStarMap_ShowRemotePlanetDossier }
 procedure TfStarMap.ShowRemotePlanetDossier(Planet: TPlanet);
-var W, H, PreviewSize, RightX, RightW: Integer; Frame: TFrameGI;
+var W, H, RightX, RightW: Integer;
 begin
   if Planet = nil then Exit;
   RemoteViewSelectedPlanet := Planet;
@@ -422,53 +445,61 @@ begin
   ShowObjectInfo(nil);
   if RemotePlanetDossier = nil then
   begin
-    W := Min(GameScreenWidth - GiScalePixels(48), GiScalePixels(1000));
-    H := Min(GameScreenHeight - GiScalePixels(48), GiScalePixels(620));
-    PreviewSize := Min(H - GiScalePixels(130), W * 46 div 100);
-    RightX := GiScalePixels(38) + PreviewSize + GiScalePixels(35);
+    W := GameScreenWidth;
+    H := GameScreenHeight;
+    RemotePlanetPreviewFinalSize := Min(H * 72 div 100, W * 52 div 100);
+    RemotePlanetPreviewFinalPosition := Classes.Point(W * 8 div 100, (H - RemotePlanetPreviewFinalSize) div 2 + GiScalePixels(18));
+    RightX := RemotePlanetPreviewFinalPosition.X + RemotePlanetPreviewFinalSize + GiScalePixels(60);
     RightW := W - RightX - GiScalePixels(38);
     RemotePlanetDossier := TWindowGI.Create(ContentPanel);
     RemotePlanetDossier.SetDepth(2);
     RemotePlanetDossier.SetConfigPath('Style.Window.' + GiResourceSuffix + 'MessageBox');
     RemotePlanetDossier.SetSize(Classes.Point(W, H));
-    RemotePlanetDossier.SetPosition(Classes.Point((GameScreenWidth - W) div 2, (GameScreenHeight - H) div 2));
+    RemotePlanetDossier.SetPosition(Classes.Point(0, 0));
     RemotePlanetDossier.UpdateAutoGeometry;
-    Frame := TFrameGI.Create(RemotePlanetDossier);
-    Frame.SetPosition(Classes.Point(GiScalePixels(28), GiScalePixels(70)));
-    Frame.SetSize(Classes.Point(PreviewSize + GiScalePixels(20), PreviewSize + GiScalePixels(20)));
-    Frame.SetKind(fkRect);
-    Frame.SetColor(CurrentPixelFormat.PackRgbBytes(49, 184, 225));
-    Frame.SetFillColor(CurrentPixelFormat.PackRgbBytes(4, 18, 34));
-    Frame.SetFill(True);
+    // This opaque dark field deliberately covers the actual map planet.
+    // The player sees one planet only: the focused hologram below.
+    RemotePlanetBackdrop := TFrameGI.Create(RemotePlanetDossier);
+    RemotePlanetBackdrop.SetPosition(Classes.Point(0, 0));
+    RemotePlanetBackdrop.SetSize(Classes.Point(W, H));
+    RemotePlanetBackdrop.SetKind(fkRect);
+    RemotePlanetBackdrop.SetColor(CurrentPixelFormat.PackRgbBytes(35, 156, 200));
+    RemotePlanetBackdrop.SetFillColor(CurrentPixelFormat.PackRgbBytes(2, 10, 22));
+    RemotePlanetBackdrop.SetFill(True);
+    RemotePlanetPreviewFrame := TFrameGI.Create(RemotePlanetDossier);
+    RemotePlanetPreviewFrame.SetKind(fkRect);
+    RemotePlanetPreviewFrame.SetColor(CurrentPixelFormat.PackRgbBytes(55, 215, 255));
+    RemotePlanetPreviewFrame.SetFillColor(CurrentPixelFormat.PackRgbBytes(3, 22, 40));
+    RemotePlanetPreviewFrame.SetFill(True);
     RemotePlanetPreview := TGraphBufGI.Create(RemotePlanetDossier, False);
     RemotePlanetPreview.SourceHasPerPixelAlpha := True;
-    RemotePlanetPreview.SetPosition(Classes.Point(GiScalePixels(38), GiScalePixels(80)));
-    RemotePlanetPreview.SetSize(Classes.Point(PreviewSize, PreviewSize));
     RemotePlanetPreview.SetImageKindX(ikxCenter); RemotePlanetPreview.SetImageKindY(ikyCenter);
     RemotePlanetTitle := TLabelGI.Create(RemotePlanetDossier);
-    RemotePlanetTitle.SetPosition(Classes.Point(GiScalePixels(30), GiScalePixels(20)));
-    RemotePlanetTitle.SetSize(Classes.Point(W - GiScalePixels(100), GiScalePixels(36)));
+    RemotePlanetTitle.SetPosition(Classes.Point(GiScalePixels(56), GiScalePixels(36)));
+    RemotePlanetTitle.SetSize(Classes.Point(W - GiScalePixels(112), GiScalePixels(52)));
     RemotePlanetTitle.SetFontName(HugeFontName);
-    RemotePlanetTitle.SetTextColor(CurrentPixelFormat.PackRgbBytes(102, 230, 255));
+    RemotePlanetTitle.SetTextColor(CurrentPixelFormat.PackRgbBytes(180, 245, 255));
     RemotePlanetTitle.SetTextAlignX(taxLeft); RemotePlanetTitle.SetTextAlignY(tayCenter);
     RemotePlanetDetails := TLabelGI.Create(RemotePlanetDossier);
-    RemotePlanetDetails.SetPosition(Classes.Point(RightX, GiScalePixels(96)));
-    RemotePlanetDetails.SetSize(Classes.Point(RightW, H - GiScalePixels(190)));
+    RemotePlanetDetails.SetPosition(Classes.Point(RightX, H * 18 div 100));
+    RemotePlanetDetails.SetSize(Classes.Point(RightW, H * 62 div 100));
     RemotePlanetDetails.SetWordWrapEnabled(True);
-    RemotePlanetDetails.SetFontName(NormalBoldFontName);
+    RemotePlanetDetails.SetFontName(SmoothHugeFontName);
     RemotePlanetDetails.SetTextAlignX(taxLeft); RemotePlanetDetails.SetTextAlignY(tayCenter);
-    RemotePlanetDetails.SetTextColor(CurrentPixelFormat.PackRgbBytes(215, 239, 255));
+    RemotePlanetDetails.SetTextColor(CurrentPixelFormat.PackRgbBytes(235, 250, 255));
     RemotePlanetActionLabel := TLabelGI.Create(RemotePlanetDossier);
-    RemotePlanetActionLabel.SetPosition(Classes.Point(RightX, H - GiScalePixels(78)));
-    RemotePlanetActionLabel.SetSize(Classes.Point(RightW, GiScalePixels(30)));
-    RemotePlanetActionLabel.SetFontName(NormalBoldFontName);
+    RemotePlanetActionLabel.SetPosition(Classes.Point(RightX, H * 84 div 100));
+    RemotePlanetActionLabel.SetSize(Classes.Point(RightW, GiScalePixels(44)));
+    RemotePlanetActionLabel.SetFontName(SmoothHugeFontName);
     RemotePlanetActionLabel.SetTextAlignX(taxCenter); RemotePlanetActionLabel.SetTextAlignY(tayCenter);
     RemotePlanetActionLabel.SetTextColor(CurrentPixelFormat.PackRgbBytes(80, 225, 255));
     RemotePlanetActionLabel.SetText('УПРАВЛЕНИЕ ПЛАНЕТОЙ');
     RemotePlanetActionLabel.LeftButtonDownCallback := RemotePlanetManagementClicked;
   end;
   RemotePlanetTitle.SetText(Planet.Name + '  //  ' + RemoteViewStar.Name);
-  RemotePlanetActionLabel.SetActive(Planet.IsCoalitionOwned);
+  RemotePlanetTitle.SetActive(False);
+  RemotePlanetDetails.SetActive(False);
+  RemotePlanetActionLabel.SetActive(False);
   RemotePlanetDetails.SetText('ПЛАНЕТАРНОЕ ДОСЬЕ' + #13#10 + #13#10 +
     'Раса: ' + Planet.GetNativeRaceName + #13#10 +
     'Население: ' + IntToStr(Round(Planet.Population)) + #13#10 +
