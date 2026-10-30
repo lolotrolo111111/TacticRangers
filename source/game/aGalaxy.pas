@@ -5598,25 +5598,6 @@ end;
 { @end $84DBAC }
 
 { @routine $84DC08 TStar_OpenSpaceScene }
-procedure RegisterTacticRangersVisualResources;
-var
-  ResourceMap, TacticRangersMap: TBlockParEC;
-begin
-  // The stock cache only knows files indexed in CacheData.dat.  Registering
-  // two additional keys here lets the strategy build keep optional visuals
-  // beside Rangers.exe without replacing or repacking the original archives.
-  if CacheDataRoot.FileExistsByPath('Bm.TacticRangers.Earth') then Exit;
-  ResourceMap := TBlockParEC.Create;
-  try
-    TacticRangersMap := ResourceMap.GetOrAddBlockByPath('Bm.TacticRangers');
-    TacticRangersMap.AddParam('Earth', 'TacticRangers\Earth.png');
-    TacticRangersMap.AddParam('Sun', 'TacticRangers\Sun.png');
-    CacheDataRoot.AddMissingFromBlock(ResourceMap);
-  finally
-    ResourceMap.Free;
-  end;
-end;
-
 procedure TStar.OpenSpaceScene(MapPanel: TPanelGI; Minimap: TObjectGI; Screen: TMessageLoopGI);
 var
   I, J: Integer;
@@ -5651,25 +5632,6 @@ begin
   if GetPlayer <> nil then
     if GetPlayer.IsHealthEffectActive(1) then SpaceProcess.Space.AlphaShift := 2;
   SpaceProcess.BindMinimap(Minimap);
-  // The Terron system is the sole generated Solar System.  Its third planet
-  // is Earth (the order is fixed by TPlanet.InitGenerated), so the change is
-  // deliberately limited to it rather than recolouring every blue planet.
-  if (Graphic <> nil) and (Graphic.GraphKey = 'Star.Terron') then
-  begin
-    RegisterTacticRangersVisualResources;
-    if Graphic is TStarSE then
-      TStarSE(Graphic).StaticImagePath := 'Bm.TacticRangers.Sun';
-    if Planets.Count > 2 then
-    begin
-      Planet := TPlanet(Planets[2]);
-      Planet.Graphic.ImagePath := 'Bm.TacticRangers.Earth';
-      // The new map includes cloud systems already.  Do not overlay the
-      // original planet family's independent cloud layers on top of it.
-      Planet.Graphic.Cloud1ImagePath := '';
-      Planet.Graphic.Cloud2ImagePath := '';
-      Planet.Graphic.Cloud3ImagePath := '';
-    end;
-  end;
   Graphic.AttachToSpace(SpaceProcess.Space);
   for I := 0 to Planets.Count - 1 do
   begin
