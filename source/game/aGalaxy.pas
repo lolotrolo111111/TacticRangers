@@ -5608,12 +5608,10 @@ begin
   if CacheDataRoot.FileExistsByPath('Bm.TacticRangers.Earth') then Exit;
   ResourceMap := TBlockParEC.Create;
   try
-    // AddMissingFromBlock intentionally does not merge an existing subtree.
-    // Bm already exists in every game install, so merge our new child below it.
-    TacticRangersMap := ResourceMap.GetOrAddBlockByPath('TacticRangers');
+    TacticRangersMap := ResourceMap.GetOrAddBlockByPath('Bm.TacticRangers');
     TacticRangersMap.AddParam('Earth', 'TacticRangers\Earth.png');
     TacticRangersMap.AddParam('Sun', 'TacticRangers\Sun.png');
-    CacheDataRoot.GetData('Bm').AddMissingFromBlock(ResourceMap);
+    CacheDataRoot.AddMissingFromBlock(ResourceMap);
   finally
     ResourceMap.Free;
   end;
