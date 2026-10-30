@@ -388,17 +388,23 @@ begin
     EarthDossierPanel.SetDepth(2);
     EarthDossierPanel.SetPosition(Classes.Point(0, 0));
     EarthDossierPanel.SetSize(Classes.Point(W, H));
-    // Keep the live star field as the background.  Full-screen frames here
-    // would be drawn above the planet texture by the legacy UI renderer.
+    // Four translucent layers keep the native star field visible, while
+    // pushing ordinary system objects into the background of the dossier.
+    Frame := TFrameGI.Create(EarthDossierPanel);
+    Frame.SetPosition(Classes.Point(0, 0)); Frame.SetSize(Classes.Point(W, H));
+    Frame.SetFillColor(CurrentPixelFormat.PackRgbBytes(0, 0, 0)); Frame.SetFill(True); Frame.FillAlpha := 1;
+    Frame := TFrameGI.Create(EarthDossierPanel);
+    Frame.SetPosition(Classes.Point(0, 0)); Frame.SetSize(Classes.Point(W, H));
+    Frame.SetFillColor(CurrentPixelFormat.PackRgbBytes(0, 0, 0)); Frame.SetFill(True); Frame.FillAlpha := 1;
+    Frame := TFrameGI.Create(EarthDossierPanel);
+    Frame.SetPosition(Classes.Point(0, 0)); Frame.SetSize(Classes.Point(W, H));
+    Frame.SetFillColor(CurrentPixelFormat.PackRgbBytes(0, 0, 0)); Frame.SetFill(True); Frame.FillAlpha := 1;
     EarthDossierPlanet := TGraphBufGI.Create(EarthDossierPanel, False);
     EarthDossierPlanet.SetPosition(Classes.Point(W * 8 div 100, (H - PlanetSize) div 2));
     EarthDossierPlanet.SetSize(Classes.Point(PlanetSize, PlanetSize));
     EarthDossierPlanet.SetImageKindX(ikxCenter); EarthDossierPlanet.SetImageKindY(ikyCenter);
     try
-      // The game's bundled image reader is reliable with 24-bit BMP.  PNG
-      // alpha from an external file can be accepted yet rendered invisible.
-      EarthDossierPlanet.SourceHasPerPixelAlpha := False;
-      EarthDossierPlanet.LoadBitmapPathAsRgb('TacticRangers\Earth.bmp?RGB');
+      EarthDossierPlanet.LoadBitmapPathAsRgba('TacticRangers\\Earth.png?RGBA');
     except
       // A missing or unsupported loose asset must not terminate the game.
       // The panel remains usable and reports the problem in the regular hint.
