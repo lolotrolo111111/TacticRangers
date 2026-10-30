@@ -150,6 +150,8 @@ type
     procedure EndRemoteView; // @addr $F0000021 @note "Mod-added camera."
     procedure RemoteViewClick(Sender: TObjectGI; KeyState: Cardinal; Point: TPoint); // @addr $F0000022 @ida "void __userpurge $name(TfStarMap *Self@<eax>, TObjectGI *Sender@<edx>, unsigned int KeyState@<ecx>, TPoint *Point@<^0>);" @note "Mod-added camera."
     procedure AdvanceRemoteViewTransition(Timer: PCallbackTimerGI; UserData: Integer); // @addr $F0000024 @note "Mod-added camera fly-in animation."
+    procedure OpenEarthDossier; // @addr $F0000025 @note "Mod-added photorealistic Earth prototype."
+    procedure CloseEarthDossier; // @addr $F0000026 @note "Mod-added Earth prototype close."
     procedure CenterMapForTalk(Position: TPointF); // @addr 0x7A5FB8 @ida "void __usercall $name(TfStarMap *Self@<eax>, TPointF *Position@<edx>);"
     procedure RestorePendingSceneObjects; // @addr 0x7A8AE8
     procedure BuildSpaceBackground(StarField: TStarFieldGI; SpaceImage: TSpaceImgGI; Seed: Cardinal; BackgroundIndex: Integer); // @addr 0x7A8CA4
@@ -249,7 +251,7 @@ var
 implementation
 
 uses Globals, GlobalsV, SE_Process, GR_Main, ThreadCalc, aCalc, aPlayer, EC_Str,
-  GI_GAI, aEFilmEnd, aMyFunction, fLoad, fFilmFile, Windows, Messages, GI_MultiImage, aGalaxyStruct, aScript, fShip2, SysUtils, GR_DX, GR_Rect, SE_Hole, aKling, GR_Gi, aRanger, fGalaxy2, fSaveManager, GI_MessageBox, aConst, aPlanet, aRuins, Robot, aSaveLoad, fLoadRobot, GI_StarFieldImg, Math, Achievements, EC_Mem, aMissile, SE_Missile, SE_Ship2, SE_Container, SE_Ruins, SE_Asteroid, SE_Planet, SE_Star, aEObjInfo, aPirate, aPath, fTalk, fGoodsShop2, aTranclucator, ab_MainForm, fGov;
+  GI_GAI, aEFilmEnd, aMyFunction, fLoad, fFilmFile, Windows, Messages, GI_MultiImage, aGalaxyStruct, aScript, fShip2, SysUtils, GR_DX, GR_Rect, SE_Hole, aKling, GR_Gi, aRanger, fGalaxy2, fSaveManager, GI_MessageBox, aConst, aPlanet, aRuins, Robot, aSaveLoad, fLoadRobot, GI_StarFieldImg, Math, Achievements, EC_Mem, aMissile, SE_Missile, SE_Ship2, SE_Container, SE_Ruins, SE_Asteroid, SE_Planet, SE_Star, aEObjInfo, aPirate, aPath, fTalk, fGoodsShop2, aTranclucator, ab_MainForm, fGov, GI_Frame;
 
 var
   RemoteViewStar: TStar = nil;
@@ -258,6 +260,8 @@ var
   RemoteViewTransitionProgress: Single = 0;
   RemoteViewTransitionStartCenter: TPoint;
   RemoteViewTransitionBackgroundScale: Single = 1;
+  EarthDossierPanel: TPanelGI = nil;
+  EarthDossierPlanet: TGraphBufGI = nil;
 
 { @routine $F0000020 TfStarMap_BeginRemoteView }
 procedure TfStarMap.BeginRemoteView(Star: TStar);
@@ -322,6 +326,7 @@ begin
     SpaceEffectsTimer := nil;
   end;
   MapControls.LeftButtonDownCallback := nil;
+  CloseEarthDossier;
   SpaceProcess.CloseSpace;
   RemoteViewStar := nil;
   PlayerStar.OpenSpaceScene(MapControls, GetByName('MapPanel'), Self);
@@ -366,6 +371,79 @@ begin
   end;
 end;
 { @end $F0000024 }
+
+{ @routine $F0000025 TfStarMap_OpenEarthDossier }
+procedure TfStarMap.OpenEarthDossier;
+var W, H, PlanetSize, PanelLeft, PanelWidth: Integer; Frame: TFrameGI; LabelControl: TLabelGI;
+begin
+  if RemoteViewStar = nil then Exit;
+  if EarthDossierPanel = nil then
+  begin
+    W := GameScreenWidth;
+    H := GameScreenHeight;
+    PlanetSize := Min(H * 73 div 100, W * 55 div 100);
+    PanelLeft := W * 66 div 100;
+    PanelWidth := W - PanelLeft - GiScalePixels(42);
+    EarthDossierPanel := TPanelGI.Create(ContentPanel);
+    EarthDossierPanel.SetDepth(2);
+    EarthDossierPanel.SetPosition(Classes.Point(0, 0));
+    EarthDossierPanel.SetSize(Classes.Point(W, H));
+    // Four translucent layers keep the native star field visible, while
+    // pushing ordinary system objects into the background of the dossier.
+    Frame := TFrameGI.Create(EarthDossierPanel);
+    Frame.SetPosition(Classes.Point(0, 0)); Frame.SetSize(Classes.Point(W, H));
+    Frame.SetFillColor(CurrentPixelFormat.PackRgbBytes(0, 0, 0)); Frame.SetFill(True); Frame.FillAlpha := 1;
+    Frame := TFrameGI.Create(EarthDossierPanel);
+    Frame.SetPosition(Classes.Point(0, 0)); Frame.SetSize(Classes.Point(W, H));
+    Frame.SetFillColor(CurrentPixelFormat.PackRgbBytes(0, 0, 0)); Frame.SetFill(True); Frame.FillAlpha := 1;
+    Frame := TFrameGI.Create(EarthDossierPanel);
+    Frame.SetPosition(Classes.Point(0, 0)); Frame.SetSize(Classes.Point(W, H));
+    Frame.SetFillColor(CurrentPixelFormat.PackRgbBytes(0, 0, 0)); Frame.SetFill(True); Frame.FillAlpha := 1;
+    EarthDossierPlanet := TGraphBufGI.Create(EarthDossierPanel, False);
+    EarthDossierPlanet.SetPosition(Classes.Point(W * 8 div 100, (H - PlanetSize) div 2));
+    EarthDossierPlanet.SetSize(Classes.Point(PlanetSize, PlanetSize));
+    EarthDossierPlanet.SetImageKindX(ikxCenter); EarthDossierPlanet.SetImageKindY(ikyCenter);
+    EarthDossierPlanet.LoadBitmapPathAsRgba('TacticRangers\\Earth.png?RGBA');
+    Frame := TFrameGI.Create(EarthDossierPanel);
+    Frame.SetPosition(Classes.Point(PanelLeft, GiScalePixels(70)));
+    Frame.SetSize(Classes.Point(PanelWidth, H - GiScalePixels(140)));
+    Frame.SetKind(fkRect); Frame.SetColor(CurrentPixelFormat.PackRgbBytes(206, 138, 59));
+    Frame.SetFillColor(CurrentPixelFormat.PackRgbBytes(20, 7, 3)); Frame.SetFill(True);
+    LabelControl := TLabelGI.Create(EarthDossierPanel);
+    LabelControl.SetPosition(Classes.Point(PanelLeft, GiScalePixels(30)));
+    LabelControl.SetSize(Classes.Point(PanelWidth, GiScalePixels(42)));
+    LabelControl.SetFontName(HugeFontName); LabelControl.SetText('ЗЕМЛЯ');
+    LabelControl.SetTextAlignX(taxCenter); LabelControl.SetTextAlignY(tayCenter);
+    LabelControl.SetTextColor(CurrentPixelFormat.PackRgbBytes(169, 255, 99));
+    LabelControl := TLabelGI.Create(EarthDossierPanel);
+    LabelControl.SetPosition(Classes.Point(PanelLeft + GiScalePixels(24), GiScalePixels(112)));
+    LabelControl.SetSize(Classes.Point(PanelWidth - GiScalePixels(48), H - GiScalePixels(230)));
+    LabelControl.SetWordWrapEnabled(True); LabelControl.SetFontName(SmoothHugeFontName);
+    LabelControl.SetTextAlignX(taxLeft); LabelControl.SetTextAlignY(tayCenter);
+    LabelControl.SetTextColor(CurrentPixelFormat.PackRgbBytes(255, 210, 150));
+    LabelControl.SetText('ТЕРРАНСКАЯ ФЕДЕРАЦИЯ' + #13#10 + #13#10 +
+      'Прототип фотореалистичного планетарного обзора.' + #13#10 + #13#10 +
+      'Здесь будут отображаться история мира, население, экономика, строй, гарнизон, торговые маршруты и текущие стратегические решения.' + #13#10 + #13#10 +
+      'Первый этап намеренно посвящён только качеству визуального языка: крупная планета, читаемый текст и отсутствие мелких служебных окон.');
+    LabelControl := TLabelGI.Create(EarthDossierPanel);
+    LabelControl.SetPosition(Classes.Point(PanelLeft, H - GiScalePixels(62)));
+    LabelControl.SetSize(Classes.Point(PanelWidth, GiScalePixels(28)));
+    LabelControl.SetFontName(SmoothHugeFontName); LabelControl.SetText('ESC  ВЕРНУТЬСЯ К СИСТЕМЕ');
+    LabelControl.SetTextAlignX(taxCenter); LabelControl.SetTextAlignY(tayCenter);
+    LabelControl.SetTextColor(CurrentPixelFormat.PackRgbBytes(255, 210, 150));
+  end;
+  EarthDossierPanel.SetActive(True);
+  FullFrameRedrawRequested := True;
+end;
+{ @end $F0000025 }
+
+{ @routine $F0000026 TfStarMap_CloseEarthDossier }
+procedure TfStarMap.CloseEarthDossier;
+begin
+  if EarthDossierPanel <> nil then EarthDossierPanel.SetActive(False);
+  FullFrameRedrawRequested := True;
+end;
+{ @end $F0000026 }
 
 { @routine $F0000022 TfStarMap_RemoteViewClick }
 procedure TfStarMap.RemoteViewClick(Sender: TObjectGI; KeyState: Cardinal; Point: TPoint);
@@ -1247,7 +1325,12 @@ procedure TfStarMap.MapKeyDown(Sender: TObjectGI; Key: Cardinal);
 begin
   if RemoteViewStar <> nil then
   begin
-    if Key = VK_ESCAPE then EndRemoteView
+    if (EarthDossierPanel <> nil) and EarthDossierPanel.Active then
+    begin
+      if Key = VK_ESCAPE then CloseEarthDossier;
+    end
+    else if Key = Ord('E') then OpenEarthDossier
+    else if Key = VK_ESCAPE then EndRemoteView
     else if Key = VK_LEFT then ScrollLeftHeld := True
     else if Key = VK_RIGHT then ScrollRightHeld := True
     else if Key = VK_UP then ScrollUpHeld := True
