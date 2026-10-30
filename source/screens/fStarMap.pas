@@ -403,7 +403,14 @@ begin
     EarthDossierPlanet.SetPosition(Classes.Point(W * 8 div 100, (H - PlanetSize) div 2));
     EarthDossierPlanet.SetSize(Classes.Point(PlanetSize, PlanetSize));
     EarthDossierPlanet.SetImageKindX(ikxCenter); EarthDossierPlanet.SetImageKindY(ikyCenter);
-    EarthDossierPlanet.LoadBitmapPathAsRgba('TacticRangers\\Earth.png?RGBA');
+    try
+      EarthDossierPlanet.LoadBitmapPathAsRgba('TacticRangers\\Earth.png?RGBA');
+    except
+      // A missing or unsupported loose asset must not terminate the game.
+      // The panel remains usable and reports the problem in the regular hint.
+      EarthDossierPlanet.SetActive(False);
+      ShowLargeHelp('ТЕКСТУРА ЗЕМЛИ НЕ ЗАГРУЖЕНА');
+    end;
     Frame := TFrameGI.Create(EarthDossierPanel);
     Frame.SetPosition(Classes.Point(PanelLeft, GiScalePixels(70)));
     Frame.SetSize(Classes.Point(PanelWidth, H - GiScalePixels(140)));
